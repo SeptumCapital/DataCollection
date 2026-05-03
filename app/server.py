@@ -7,12 +7,14 @@ import os
 import re
 import argparse
 import time
+import threading
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -26,6 +28,7 @@ APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "static"
 DATA_ROOT = Path(os.environ.get("SENQUANT_DATA_ROOT", APP_ROOT.parent / "data")).expanduser()
 UNIVERSE_PATH = DATA_ROOT / "universe" / "sp500_constituents.csv"
+REFRESH_MARKER_PATH = DATA_ROOT / ".senquant_refresh_complete"
 TECHNICALS_DIR = DATA_ROOT / "technicals" / "from_yahoo_daily"
 PRICES_DIR = DATA_ROOT / "prices" / "yahoo_daily"
 FUNDAMENTALS_DIR = DATA_ROOT / "fundamentals" / "sec_companyfacts" / "long"
@@ -685,13 +688,68 @@ def resample_frame(frame: pd.DataFrame, interval: str) -> pd.DataFrame:
 
 
 STORE = DataStore.load()
+STORE_LOADED_AT = time.time()
+STORE_RELOAD_CHECKED_AT = 0.0
 
 
 def current_store() -> DataStore:
-    global STORE
-    if STORE.universe.empty and UNIVERSE_PATH.exists():
+    global STORE, STORE_LOADED_AT, STORE_RELOAD_CHECKED_AT
+    now = time.time()
+    if now - STORE_RELOAD_CHECKED_AT < 60:
+        return STORE
+    STORE_RELOAD_CHECKED_AT = now
+
+    marker_mtime = REFRESH_MARKER_PATH.stat().st_mtime if REFRESH_MARKER_PATH.exists() else 0
+    if (STORE.universe.empty and UNIVERSE_PATH.exists()) or marker_mtime > STORE_LOADED_AT:
         STORE = DataStore.load()
+        STORE_LOADED_AT = now
     return STORE
+
+
+def refresh_enabled() -> bool:
+    return os.environ.get("SENQUANT_ENABLE_DAILY_REFRESH", "").lower() in {"1", "true", "yes", "on"}
+
+
+def next_refresh_delay_seconds() -> float:
+    timezone_name = os.environ.get("SENQUANT_REFRESH_TIMEZONE", "America/New_York")
+    hour = int(os.environ.get("SENQUANT_REFRESH_HOUR", "17"))
+    minute = int(os.environ.get("SENQUANT_REFRESH_MINUTE", "30"))
+    tz = ZoneInfo(timezone_name)
+    now = datetime.now(tz)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    marker_day = None
+    if REFRESH_MARKER_PATH.exists():
+        marker_day = datetime.fromtimestamp(REFRESH_MARKER_PATH.stat().st_mtime, tz).date()
+    if now.weekday() < 5 and now >= target and marker_day != now.date():
+        return 60
+
+    if now >= target:
+        target += timedelta(days=1)
+    while target.weekday() >= 5:
+        target += timedelta(days=1)
+    return max(60, (target - now).total_seconds())
+
+
+def daily_refresh_loop() -> None:
+    from datacollection.daily_refresh import refresh_daily_market_data
+
+    while True:
+        delay = next_refresh_delay_seconds()
+        print(f"Next daily market refresh in {delay / 3600:.2f} hours", flush=True)
+        time.sleep(delay)
+        try:
+            result = refresh_daily_market_data()
+            print(f"Daily market refresh complete: {result}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Daily market refresh failed: {exc}", flush=True)
+
+
+def start_daily_refresh_thread() -> None:
+    if not refresh_enabled():
+        return
+    thread = threading.Thread(target=daily_refresh_loop, name="daily-market-refresh", daemon=True)
+    thread.start()
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -780,6 +838,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), AppHandler)
+    start_daily_refresh_thread()
     print(f"SenQuant Data Browser running at http://{args.host}:{args.port}")
     server.serve_forever()
 

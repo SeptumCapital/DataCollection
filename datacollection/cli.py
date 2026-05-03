@@ -175,6 +175,23 @@ def cmd_yahoo_enrichment(args: argparse.Namespace) -> None:
     print(f"Wrote Yahoo enrichment for {len(summaries)} symbols")
 
 
+def cmd_daily_refresh(args: argparse.Namespace) -> None:
+    from .daily_refresh import refresh_daily_market_data
+
+    result = refresh_daily_market_data(
+        symbols=parse_list(args.symbols),
+        lookback_days=args.lookback_days,
+        update_universe=not args.skip_universe,
+        end=parse_date(args.end) if args.end else None,
+    )
+    print(
+        "Daily refresh complete: "
+        f"{result['updated_price_files']} price files, "
+        f"{result['technical_files']} technical files, "
+        f"{result['errors']} errors"
+    )
+
+
 def cmd_all(args: argparse.Namespace) -> None:
     cmd_universe(argparse.Namespace(output=None, no_sec_exchange=False))
     shared = argparse.Namespace(
@@ -290,6 +307,13 @@ def build_parser() -> argparse.ArgumentParser:
     enrichment.add_argument("--sleep", type=float, default=0.25, help="Seconds between symbols.")
     enrichment.add_argument("--overwrite", action="store_true")
     enrichment.set_defaults(func=cmd_yahoo_enrichment)
+
+    daily = subparsers.add_parser("daily-refresh", help="Refresh current Yahoo OHLCV data and recompute local technicals.")
+    daily.add_argument("--symbols", help="Comma-separated ticker subset, for testing or resuming.")
+    daily.add_argument("--lookback-days", type=int, default=10, help="Refetch this many days before each symbol's latest saved date.")
+    daily.add_argument("--skip-universe", action="store_true", help="Do not refresh the S&P 500 universe before prices.")
+    daily.add_argument("--end", help="Optional YYYY-MM-DD end date. Defaults to today.")
+    daily.set_defaults(func=cmd_daily_refresh)
 
     all_cmd = subparsers.add_parser("all", help="Run universe, prices, SEC fundamentals, and local technicals.")
     all_cmd.add_argument("--symbols", help="Comma-separated ticker subset, for testing or resuming.")

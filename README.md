@@ -232,6 +232,37 @@ Check that the live app sees the data:
 curl https://septumcapital.com/health
 ```
 
+### Daily Market Refresh
+
+The daily refresh updates the current S&P 500 universe, incrementally refetches recent Yahoo OHLCV rows, merges them into `data/prices/yahoo_daily`, recomputes local technicals, and writes a refresh marker so the web app reloads the updated data.
+
+Run it manually:
+
+```bash
+scripts/daily_refresh.sh
+```
+
+Render runs the same refresh inside the web service process at 5:30 PM America/New_York on weekdays when this environment variable is enabled:
+
+```text
+SENQUANT_ENABLE_DAILY_REFRESH=true
+```
+
+This is intentionally not a separate Render Cron service because Render cron jobs cannot access persistent disks. The web service already has `/var/data/senquant` mounted, so it is the correct place to update the CSV data.
+
+Install the local macOS schedule:
+
+```bash
+scripts/install_local_daily_refresh.sh
+```
+
+That installs a LaunchAgent that runs weekdays at 3:30 PM local time on this Mac. Logs are written to:
+
+```text
+logs/daily-refresh.out.log
+logs/daily-refresh.err.log
+```
+
 ## Notes
 
 - The S&P 500 has multiple share classes, so the constituents table can contain more than 500 rows.

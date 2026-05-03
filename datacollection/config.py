@@ -21,7 +21,7 @@ load_environment()
 
 
 def data_root() -> Path:
-    configured = os.getenv("DATA_COLLECTION_ROOT", "./data")
+    configured = os.getenv("DATA_COLLECTION_ROOT") or os.getenv("SENQUANT_DATA_ROOT") or "./data"
     root = Path(configured)
     if not root.is_absolute():
         root = PACKAGE_ROOT / root

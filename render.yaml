@@ -10,6 +10,16 @@ services:
         value: 3.12.4
       - key: SENQUANT_DATA_ROOT
         value: /var/data/senquant/data
+      - key: DATA_COLLECTION_ROOT
+        value: /var/data/senquant/data
+      - key: SENQUANT_ENABLE_DAILY_REFRESH
+        value: "true"
+      - key: SENQUANT_REFRESH_TIMEZONE
+        value: America/New_York
+      - key: SENQUANT_REFRESH_HOUR
+        value: "17"
+      - key: SENQUANT_REFRESH_MINUTE
+        value: "30"
     disk:
       name: senquant-data
       mountPath: /var/data/senquant
