@@ -1,0 +1,6 @@
+pandas>=2.2
+requests>=2.32
+python-dotenv>=1.0
+tqdm>=4.66
+lxml>=5.2
+yfinance>=1.3
