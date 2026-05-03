@@ -687,10 +687,18 @@ def resample_frame(frame: pd.DataFrame, interval: str) -> pd.DataFrame:
 STORE = DataStore.load()
 
 
+def current_store() -> DataStore:
+    global STORE
+    if STORE.universe.empty and UNIVERSE_PATH.exists():
+        STORE = DataStore.load()
+    return STORE
+
+
 class AppHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         try:
             parsed = urlparse(self.path)
+            store = current_store()
             if parsed.path == "/":
                 self.serve_file(STATIC_ROOT / "index.html")
             elif parsed.path.startswith("/static/"):
@@ -701,30 +709,30 @@ class AppHandler(BaseHTTPRequestHandler):
                         "ok": True,
                         "data_root": str(DATA_ROOT),
                         "has_universe": UNIVERSE_PATH.exists(),
-                        "constituents": int(len(STORE.universe)),
+                        "constituents": int(len(store.universe)),
                     }
                 )
             elif parsed.path == "/api/summary":
                 self.send_json(
                     {
-                        "constituents": int(len(STORE.universe)),
-                        "with_prices": int(STORE.stocks["has_prices"].sum()),
-                        "with_technicals": int(STORE.stocks["has_technicals"].sum()),
-                        "with_fundamentals": int(STORE.stocks["has_fundamentals"].sum()),
-                        "with_enrichment": int(STORE.stocks["has_enrichment"].sum()),
-                        "sectors": STORE.sectors,
-                        "exchanges": STORE.exchanges,
-                        "generated_at": STORE.generated_at,
+                        "constituents": int(len(store.universe)),
+                        "with_prices": int(store.stocks["has_prices"].sum()),
+                        "with_technicals": int(store.stocks["has_technicals"].sum()),
+                        "with_fundamentals": int(store.stocks["has_fundamentals"].sum()),
+                        "with_enrichment": int(store.stocks["has_enrichment"].sum()),
+                        "sectors": store.sectors,
+                        "exchanges": store.exchanges,
+                        "generated_at": store.generated_at,
                     }
                 )
             elif parsed.path == "/api/stocks":
-                self.send_json(STORE.filter_stocks(parse_qs(parsed.query)))
+                self.send_json(store.filter_stocks(parse_qs(parsed.query)))
             elif parsed.path.startswith("/api/stock/") and parsed.path.endswith("/fundamentals"):
                 symbol = unquote(parsed.path.split("/")[3])
-                self.send_json(STORE.fundamentals(symbol, parse_qs(parsed.query)))
+                self.send_json(store.fundamentals(symbol, parse_qs(parsed.query)))
             elif parsed.path.startswith("/api/stock/") and parsed.path.endswith("/enrichment"):
                 symbol = unquote(parsed.path.split("/")[3])
-                self.send_json(STORE.enrichment(symbol))
+                self.send_json(store.enrichment(symbol))
             elif parsed.path.startswith("/api/stock/") and parsed.path.endswith("/news"):
                 symbol = unquote(parsed.path.split("/")[3])
                 self.send_json(fetch_or_load_news(symbol))
@@ -733,7 +741,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_json(load_social_posts(symbol))
             elif parsed.path.startswith("/api/stock/"):
                 symbol = unquote(parsed.path.split("/")[3])
-                self.send_json(STORE.stock_detail(symbol, parse_qs(parsed.query)))
+                self.send_json(store.stock_detail(symbol, parse_qs(parsed.query)))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
         except Exception as exc:  # noqa: BLE001
