@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import mimetypes
+import os
 import re
 import argparse
 import time
@@ -23,7 +24,7 @@ except ImportError:  # pragma: no cover - app still runs without live news.
 
 APP_ROOT = Path(__file__).resolve().parent
 STATIC_ROOT = APP_ROOT / "static"
-DATA_ROOT = APP_ROOT.parent / "data"
+DATA_ROOT = Path(os.environ.get("SENQUANT_DATA_ROOT", APP_ROOT.parent / "data")).expanduser()
 UNIVERSE_PATH = DATA_ROOT / "universe" / "sp500_constituents.csv"
 TECHNICALS_DIR = DATA_ROOT / "technicals" / "from_yahoo_daily"
 PRICES_DIR = DATA_ROOT / "prices" / "yahoo_daily"
@@ -329,9 +330,36 @@ class DataStore:
     generated_at: str
 
     @classmethod
+    def empty(cls) -> "DataStore":
+        columns = [
+            "symbol",
+            "name",
+            "sector",
+            "industry",
+            "exchange",
+            "has_prices",
+            "has_technicals",
+            "has_fundamentals",
+            "has_enrichment",
+            "insider_buy_flag",
+            "at_52w_high",
+            "at_52w_low",
+            "above_sma_200",
+            "below_sma_200",
+        ]
+        return cls(
+            universe=pd.DataFrame(columns=["symbol", "sector", "sec_exchange"]),
+            stocks=pd.DataFrame(columns=columns),
+            sectors=[],
+            exchanges=[],
+            available_symbols=set(),
+            generated_at=pd.Timestamp.now("UTC").isoformat(),
+        )
+
+    @classmethod
     def load(cls) -> "DataStore":
         if not UNIVERSE_PATH.exists():
-            raise FileNotFoundError(f"Missing universe file: {UNIVERSE_PATH}")
+            return cls.empty()
 
         universe = pd.read_csv(UNIVERSE_PATH, dtype={"cik": str}).fillna("")
         universe["symbol_key"] = universe["symbol"].map(safe_symbol)
@@ -667,6 +695,15 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.serve_file(STATIC_ROOT / "index.html")
             elif parsed.path.startswith("/static/"):
                 self.serve_file(STATIC_ROOT / parsed.path.removeprefix("/static/"))
+            elif parsed.path == "/health":
+                self.send_json(
+                    {
+                        "ok": True,
+                        "data_root": str(DATA_ROOT),
+                        "has_universe": UNIVERSE_PATH.exists(),
+                        "constituents": int(len(STORE.universe)),
+                    }
+                )
             elif parsed.path == "/api/summary":
                 self.send_json(
                     {
@@ -731,8 +768,8 @@ class AppHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the SenQuant local data browser.")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", default=os.environ.get("HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), AppHandler)
     print(f"SenQuant Data Browser running at http://{args.host}:{args.port}")

@@ -162,6 +162,33 @@ Then open:
 http://127.0.0.1:8010
 ```
 
+## Render Deployment
+
+This repo includes `render.yaml` for deploying the Python-backed browser as a Render Web Service from GitHub.
+
+Render settings:
+
+```text
+Build Command: pip install -r requirements.txt
+Start Command: python app/server.py --host 0.0.0.0 --port $PORT
+Health Check Path: /health
+```
+
+The app reads data from `SENQUANT_DATA_ROOT` when set, otherwise it reads the local `data/` folder. The Render blueprint sets:
+
+```text
+SENQUANT_DATA_ROOT=/var/data/senquant/data
+```
+
+The local collected dataset is large and intentionally excluded from Git. On Render, attach or create the persistent disk from `render.yaml`, then populate `/var/data/senquant/data` with the same folder layout shown in "Output Layout". The app will boot without data for health checks, but the browser is only useful after the data folder is populated.
+
+For custom domains, point GoDaddy DNS to the Render service after the temporary `onrender.com` URL works:
+
+```text
+A      @     216.24.57.1
+CNAME  www   <your-render-service>.onrender.com
+```
+
 ## Notes
 
 - The S&P 500 has multiple share classes, so the constituents table can contain more than 500 rows.

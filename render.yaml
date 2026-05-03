@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: senquant-data-browser
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app/server.py --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.4
+      - key: SENQUANT_DATA_ROOT
+        value: /var/data/senquant/data
+    disk:
+      name: senquant-data
+      mountPath: /var/data/senquant
+      sizeGB: 10
