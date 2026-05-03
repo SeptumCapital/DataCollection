@@ -189,6 +189,49 @@ A      @     216.24.57.1
 CNAME  www   <your-render-service>.onrender.com
 ```
 
+### Code and Data Sync
+
+Render auto-deploys code when `main` is pushed to GitHub. To push committed code from this Mac automatically after every local commit, install the local Git hook:
+
+```bash
+scripts/install_auto_push_hook.sh
+```
+
+After that, this is enough for code changes:
+
+```bash
+git add .
+git commit -m "Describe change"
+```
+
+The hook runs `git push origin main`, and Render redeploys from GitHub.
+
+Data is intentionally not committed to GitHub because the local `data/` folder is large. To sync data changes to Render's persistent disk, add the Render SSH target to `.env`:
+
+```bash
+RENDER_SSH_TARGET="srv-xxxxx@ssh.virginia.render.com"
+RENDER_DATA_ROOT="/var/data/senquant"
+```
+
+Then run:
+
+```bash
+scripts/sync_render_data.sh
+```
+
+In Render Shell, extract the uploaded archive:
+
+```bash
+cd /var/data/senquant
+tar -xzf senquant-data.tgz
+```
+
+Check that the live app sees the data:
+
+```bash
+curl https://septumcapital.com/health
+```
+
 ## Notes
 
 - The S&P 500 has multiple share classes, so the constituents table can contain more than 500 rows.
