@@ -768,6 +768,10 @@ class AppHandler(BaseHTTPRequestHandler):
                         "data_root": str(DATA_ROOT),
                         "has_universe": UNIVERSE_PATH.exists(),
                         "constituents": int(len(store.universe)),
+                        "daily_refresh_enabled": refresh_enabled(),
+                        "refresh_marker": REFRESH_MARKER_PATH.read_text(encoding="utf-8").strip()
+                        if REFRESH_MARKER_PATH.exists()
+                        else None,
                     }
                 )
             elif parsed.path == "/api/summary":
