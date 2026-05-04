@@ -38,7 +38,7 @@ services:
     runtime: docker
     plan: pro
     dockerfilePath: ./deploy/ollama/Dockerfile
-    dockerContext: ./deploy/ollama
+    dockerContext: .
     envVars:
       - key: OLLAMA_MODEL
         value: llama3.2:1b

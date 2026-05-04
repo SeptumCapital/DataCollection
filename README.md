@@ -194,6 +194,8 @@ SENQUANT_OLLAMA_TIMEOUT_SECONDS=6
 
 The Ollama service stores models under `/var/data/ollama/models` and pulls `OLLAMA_MODEL` on first boot. Start with `llama3.2:1b` for faster CPU responses. You can move to a larger model by changing both `OLLAMA_MODEL` on the private service and `SENQUANT_OLLAMA_MODEL` on the web service, then redeploying.
 
+If creating the private service manually, keep Docker context as the repository root and set Dockerfile Path to `./deploy/ollama/Dockerfile`.
+
 The local collected dataset is large and intentionally excluded from Git. On Render, attach or create the persistent disk from `render.yaml`, then populate `/var/data/senquant/data` with the same folder layout shown in "Output Layout". The app will boot without data for health checks, but the browser is only useful after the data folder is populated.
 
 For custom domains, point GoDaddy DNS to the Render service after the temporary `onrender.com` URL works:
