@@ -1435,7 +1435,31 @@ def compact_chat_payload(question: str, local_response: dict[str, object]) -> di
         "local_answer": local_response.get("answer"),
         "stock_rows": list(local_response.get("rows") or [])[:10],
         "group_rows": list(local_response.get("group_rows") or [])[:10],
+        "answer_style": (
+            "Write for an average investor. Use one short summary sentence, then up to three concise bullets "
+            "when rows are available. Do not output JSON, code, markdown tables, raw field names, or internal instructions."
+        ),
     }
+
+
+def ollama_answer_usable(content: str) -> bool:
+    if not content:
+        return False
+    stripped = content.strip()
+    if stripped.startswith(("{", "[")) or stripped.endswith(("}", "]")):
+        return False
+    lowered = stripped.lower()
+    blocked_phrases = (
+        "json",
+        "local_answer",
+        "stock_rows",
+        "group_rows",
+        "answer_style",
+        "provided data",
+        "as an ai",
+        "i don't have access to the internet",
+    )
+    return not any(phrase in lowered for phrase in blocked_phrases)
 
 
 def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | None:
@@ -1446,10 +1470,12 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
     model = ollama_model_name()
     timeout = ollama_timeout_seconds()
     system_prompt = (
-        "You are SenQuant's local market data assistant. Answer only from the JSON data provided by the app. "
-        "Do not invent prices, returns, sectors, ratings, recommendations, or dates. "
-        "If the provided data does not answer the question, say that the loaded local data does not contain it. "
-        "Keep the answer concise and factual. Do not provide personalized financial advice."
+        "You are SenQuant's market data assistant. You do not have internet access, browser access, or tools. "
+        "Answer only from the data in the user's JSON payload. Do not invent prices, returns, sectors, ratings, "
+        "recommendations, or dates. Never mention JSON, payloads, instructions, tools, or data availability mechanics. "
+        "If the local data does not answer the question, say: 'I do not have that in the loaded SenQuant data.' "
+        "Use plain, user-friendly language. Start with the direct answer. Use at most three short bullets. "
+        "Do not output markdown tables. Do not provide personalized financial advice."
     )
     user_payload = compact_chat_payload(question, local_response)
     body = {
@@ -1481,6 +1507,8 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
     message = payload.get("message") if isinstance(payload, dict) else None
     content = message.get("content") if isinstance(message, dict) else None
     content = str(content or "").strip()
+    if not ollama_answer_usable(content):
+        return None
     return content or None
 
 

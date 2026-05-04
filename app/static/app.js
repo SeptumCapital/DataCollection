@@ -376,14 +376,14 @@ async function submitChat(question) {
 function addChatMessage(role, text) {
   const message = document.createElement("div");
   message.className = `chat-message ${role}`;
-  message.innerHTML = `<p>${escapeHtml(text)}</p>`;
+  message.innerHTML = chatTextHtml(text);
   $("chatMessages").appendChild(message);
   $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
   return message;
 }
 
 function chatResponseHtml(payload) {
-  const parts = [`<p>${escapeHtml(payload.answer || "No answer returned.")}</p>`];
+  const parts = [chatTextHtml(payload.answer || "No answer returned.")];
   if (payload.assistant_provider === "ollama") {
     const model = payload.assistant_model || state.chatModel || "Ollama";
     parts.push(`<p class="chat-meta">Powered by ${escapeHtml(model)}.</p>`);
@@ -397,6 +397,32 @@ function chatResponseHtml(payload) {
       .map((action) => `<button type="button" data-action-type="${escapeHtml(action.type)}" data-action-value="${escapeHtml(action.value)}">${escapeHtml(action.label)}</button>`)
       .join("")}</div>`);
   }
+  return parts.join("");
+}
+
+function chatTextHtml(text) {
+  const lines = String(text ?? "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return "<p>No answer returned.</p>";
+
+  const parts = [];
+  let bullets = [];
+  const flushBullets = () => {
+    if (!bullets.length) return;
+    parts.push(`<ul>${bullets.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`);
+    bullets = [];
+  };
+
+  for (const line of lines) {
+    const bullet = line.match(/^[-*]\s+(.+)$/);
+    const numbered = line.match(/^\d+[.)]\s+(.+)$/);
+    if (bullet || numbered) {
+      bullets.push((bullet || numbered)[1]);
+    } else {
+      flushBullets();
+      parts.push(`<p>${escapeHtml(line)}</p>`);
+    }
+  }
+  flushBullets();
   return parts.join("");
 }
 

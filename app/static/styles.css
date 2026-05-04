@@ -222,10 +222,18 @@ button:hover {
   justify-self: start;
 }
 
-.chat-message p {
+.chat-message p,
+.chat-message li {
   color: #334155;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.chat-message ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 0 18px;
+  padding: 0;
 }
 
 .chat-message .chat-meta {
