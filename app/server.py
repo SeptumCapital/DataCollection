@@ -1055,6 +1055,7 @@ RECOMMENDATION_BUILD_LOCK = threading.Lock()
 ADVANCED_RECOMMENDATION_BUILD_LOCK = threading.Lock()
 ADVANCED_RECOMMENDATION_DELAY_STATE: dict[str, bool] = {"scheduled": False}
 CHAT_SESSION_MEMORY: dict[str, dict[str, object]] = {}
+EXTERNAL_LLM_LAST_ERROR: dict[str, str | None] = {"message": None}
 
 CHAT_ROW_COLUMNS = [
     "rank",
@@ -1561,6 +1562,29 @@ def ollama_answer_usable(content: str) -> bool:
     return not any(phrase in lowered for phrase in blocked_phrases)
 
 
+def external_answer_usable(content: str) -> bool:
+    if not content:
+        return False
+    stripped = content.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(("{", "[")) and stripped.endswith(("}", "]")):
+        return False
+    lowered = stripped.lower()
+    blocked_phrases = ("local_answer", "stock_rows", "group_rows", "answer_style")
+    return not any(phrase in lowered for phrase in blocked_phrases)
+
+
+def clean_external_answer(content: str) -> str:
+    cleaned = str(content or "").strip()
+    if "Assistant:" in cleaned:
+        cleaned = cleaned.split("Assistant:", 1)[-1].strip()
+    for prefix in ("assistant:", "ASSISTANT:"):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].strip()
+    return cleaned
+
+
 def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | None:
     base_url = ollama_base_url()
     if not base_url:
@@ -1646,6 +1670,11 @@ def extract_external_text(payload: object) -> str | None:
     if not isinstance(payload, dict):
         return None
 
+    status = str(payload.get("status") or "").upper()
+    if status and status not in {"COMPLETED", "SUCCEEDED", "SUCCESS"}:
+        EXTERNAL_LLM_LAST_ERROR["message"] = f"RunPod returned status {status}."
+        return None
+
     choices = payload.get("choices")
     if isinstance(choices, list) and choices:
         first = choices[0] if isinstance(choices[0], dict) else {}
@@ -1659,7 +1688,7 @@ def extract_external_text(payload: object) -> str | None:
     if output is not None:
         return extract_external_text(output)
 
-    for key in ("text", "response", "generated_text", "content"):
+    for key in ("text", "response", "generated_text", "content", "answer", "completion"):
         if key in payload:
             return extract_external_text(payload.get(key))
     return None
@@ -1691,6 +1720,7 @@ def call_external_openai_chat(question: str, local_response: dict[str, object], 
 
 
 def call_external_runpod_chat(question: str, local_response: dict[str, object], base_url: str, api_key: str) -> str | None:
+    wait_ms = int(min(300_000, max(1_000, external_llm_timeout_seconds() * 1000)))
     body = {
         "input": {
             "prompt": external_llm_prompt(question, local_response),
@@ -1704,7 +1734,7 @@ def call_external_runpod_chat(question: str, local_response: dict[str, object], 
         }
     }
     request = Request(
-        f"{normalize_runpod_base_url(base_url)}/runsync",
+        f"{normalize_runpod_base_url(base_url)}/runsync?wait={wait_ms}",
         data=json.dumps(body).encode("utf-8"),
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
@@ -1717,7 +1747,9 @@ def call_external_runpod_chat(question: str, local_response: dict[str, object], 
 def call_external_llm_chat(question: str, local_response: dict[str, object]) -> str | None:
     base_url = external_llm_base_url()
     api_key = external_llm_api_key()
+    EXTERNAL_LLM_LAST_ERROR["message"] = None
     if not base_url or not api_key:
+        EXTERNAL_LLM_LAST_ERROR["message"] = "External LLM base URL or API key is missing."
         return None
 
     try:
@@ -1726,11 +1758,17 @@ def call_external_llm_chat(question: str, local_response: dict[str, object]) -> 
         else:
             content = call_external_openai_chat(question, local_response, base_url, api_key)
     except Exception as exc:  # noqa: BLE001
+        EXTERNAL_LLM_LAST_ERROR["message"] = str(exc)
         print(f"External LLM unavailable: {exc}", flush=True)
         return None
 
-    content = str(content or "").strip()
-    if not ollama_answer_usable(content):
+    content = clean_external_answer(str(content or "").strip())
+    if not content:
+        if not EXTERNAL_LLM_LAST_ERROR["message"]:
+            EXTERNAL_LLM_LAST_ERROR["message"] = "RunPod returned no text output."
+        return None
+    if not external_answer_usable(content):
+        EXTERNAL_LLM_LAST_ERROR["message"] = "RunPod returned a response that looked like internal data rather than an answer."
         return None
     return content or None
 
@@ -1874,9 +1912,11 @@ def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, obj
         )
         if response:
             return response
+        detail = EXTERNAL_LLM_LAST_ERROR["message"]
+        suffix = f" Detail: {detail}" if detail else ""
         return {
             **previous_local_response,
-            "answer": "I tried the external model, but it did not return a usable answer.",
+            "answer": f"I tried the external model, but it did not return a usable answer.{suffix}",
             "assistant_provider": "local",
             "llm_fallback": True,
         }
