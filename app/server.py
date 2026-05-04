@@ -1056,11 +1056,19 @@ ADVANCED_RECOMMENDATION_BUILD_LOCK = threading.Lock()
 ADVANCED_RECOMMENDATION_DELAY_STATE: dict[str, bool] = {"scheduled": False}
 
 CHAT_ROW_COLUMNS = [
+    "rank",
+    "signal",
+    "confidence",
     "symbol",
     "name",
     "sector",
     "industry",
     "last_close",
+    "quant_score",
+    "ml_expected_21d",
+    "momentum_12_1",
+    "return_1m",
+    "return_3m",
     "return_21d",
     "return_1y",
     "rsi_14",
@@ -1068,6 +1076,8 @@ CHAT_ROW_COLUMNS = [
     "institutions_percent_held",
     "analyst_rating_score",
     "price_target_mean",
+    "target_upside",
+    "reason",
 ]
 
 
@@ -1124,6 +1134,12 @@ def chat_find_symbols(store: DataStore, question: str, context: dict[str, object
         "top",
         "what",
         "with",
+        "buy",
+        "sell",
+        "hold",
+        "recommend",
+        "recommendation",
+        "recommendations",
     }
     found: list[str] = []
     for token in re.findall(r"\b[A-Za-z][A-Za-z.-]{0,9}\b", question):
@@ -1229,8 +1245,63 @@ def format_chat_percent(value: object) -> str:
     return "-" if number is None else f"{number * 100:.1f}%"
 
 
+def chat_requested_limit(question: str, default: int = 10, maximum: int = 25) -> int:
+    lowered = question.lower()
+    word_numbers = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    for pattern in (r"\btop\s+(\d{1,2})\b", r"\bshow\s+(\d{1,2})\b", r"\b(\d{1,2})\s+(?:stocks|tickers|names)\b"):
+        match = re.search(pattern, lowered)
+        if match:
+            return max(1, min(maximum, int(match.group(1))))
+    for word, value in word_numbers.items():
+        if re.search(rf"\btop\s+{word}\b", lowered) or re.search(rf"\b{word}\s+(?:stocks|tickers|names)\b", lowered):
+            return max(1, min(maximum, value))
+    return default
+
+
+def chat_recommendation_answer(store: DataStore, question: str) -> dict[str, object]:
+    lowered = question.lower()
+    limit = chat_requested_limit(question, default=10)
+    side = "sell" if re.search(r"\b(sell|short|avoid|weakest|worst)\b", lowered) else "buy"
+    payload = recommendation_payload(store, limit=limit, allow_compute=False)
+    rows = [
+        {key: chat_value(value) for key, value in row.items()}
+        for row in payload.get(side, [])
+    ]
+    if rows:
+        label = "buy" if side == "buy" else "sell"
+        return {
+            "answer": (
+                f"Top {len(rows)} {label} recommendations from the local quant model. "
+                "These are research signals only, not financial advice."
+            ),
+            "rows": rows,
+            "actions": chat_actions_from_rows(rows),
+        }
+
+    message = str(payload.get("message") or "")
+    if payload.get("status") == "building":
+        return {
+            "answer": message or "The recommendation model is still building. Try again shortly.",
+            "rows": [],
+            "actions": [],
+        }
+    return {"answer": f"No {side} recommendations are available in the local data yet.", "rows": [], "actions": []}
+
+
 def chat_ranked_answer(store: DataStore, question: str) -> dict[str, object]:
     lowered = question.lower()
+    limit = chat_requested_limit(question, default=10)
     frame = store.stocks.copy()
     if "distance_from_sma_200" not in frame.columns and {"last_close", "sma_200"}.issubset(frame.columns):
         close = pd.to_numeric(frame["last_close"], errors="coerce")
@@ -1268,18 +1339,18 @@ def chat_ranked_answer(store: DataStore, question: str) -> dict[str, object]:
         frame = frame.sort_values("analyst_rating_score", ascending=True, na_position="last")
         answer = "Best analyst rating scores in the local data. Lower scores indicate stronger ratings."
     elif "momentum" in lowered or "top" in lowered or "best" in lowered or "strongest" in lowered:
-        payload = store.momentum_recommendations(limit=10)
+        payload = store.momentum_recommendations(limit=limit)
         rows = [
             {key: chat_value(value) for key, value in row.items()}
             for row in payload.get("rows", [])
         ]
         return {
-            "answer": "Top 12-month cross-sectional momentum recommendations from the local model.",
+            "answer": f"Top {len(rows)} 12-month cross-sectional momentum recommendations from the local model.",
             "rows": rows,
             "actions": chat_actions_from_rows(rows),
         }
 
-    rows = chat_rows(frame, limit=10)
+    rows = chat_rows(frame, limit=limit)
     return {"answer": answer, "rows": rows, "actions": chat_actions_from_rows(rows)}
 
 
@@ -1432,6 +1503,11 @@ def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, obj
 
     lowered = question.lower()
     symbols = chat_find_symbols(store, question, context)
+    if re.search(r"\b(buy|sell|recommend|recommendation|recommendations|short|avoid)\b", lowered) and (
+        not symbols or re.search(r"\b(top|list|which|what|show)\b", lowered)
+    ):
+        return enrich_chat_response_with_ollama(question, chat_recommendation_answer(store, question))
+
     if symbols:
         return enrich_chat_response_with_ollama(question, chat_stock_answer(store, symbols))
 

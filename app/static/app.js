@@ -402,15 +402,25 @@ function chatResponseHtml(payload) {
 
 function chatRowsTableHtml(rows) {
   const columns = [
+    ["rank", "Rank"],
+    ["signal", "Signal"],
+    ["confidence", "Confidence"],
     ["symbol", "Ticker"],
     ["name", "Company"],
     ["sector", "Sector"],
     ["last_close", "Price"],
+    ["quant_score", "Score"],
+    ["ml_expected_21d", "ML 21D"],
+    ["momentum_12_1", "12-1 Mom"],
+    ["return_1m", "1M"],
+    ["return_3m", "3M"],
     ["return_21d", "21D"],
     ["return_1y", "1Y"],
     ["rsi_14", "RSI"],
     ["distance_from_sma_200", "vs 200D"],
     ["analyst_rating_score", "Rating"],
+    ["target_upside", "Target Upside"],
+    ["reason", "Reason"],
   ].filter(([key]) => rows.some((row) => row[key] !== null && row[key] !== undefined && row[key] !== ""));
   return `<div class="chat-table-wrap"><table class="chat-table">
     <thead><tr>${columns.map(([, label]) => `<th>${label}</th>`).join("")}</tr></thead>
@@ -442,10 +452,10 @@ function chatCellHtml(key, value, row) {
   }
   if (key === "sector") return sectorLinkHtml(value);
   if (key === "last_close" || key === "price_target_mean") return money(value);
-  if (key.includes("return") || key.includes("distance") || key.includes("percent")) {
+  if (key.includes("return") || key.includes("distance") || key.includes("percent") || key === "ml_expected_21d" || key === "momentum_12_1" || key === "target_upside") {
     return `<span class="${signedClass(value)}">${percent(value)}</span>`;
   }
-  if (key === "rsi_14" || key === "analyst_rating_score") return formatNumber(value, { digits: 1 });
+  if (key === "rsi_14" || key === "analyst_rating_score" || key === "quant_score") return formatNumber(value, { digits: 1 });
   return escapeHtml(value || "-");
 }
 
