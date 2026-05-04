@@ -113,6 +113,35 @@ async function loadStocks() {
   renderRows(payload.rows);
 }
 
+async function loadTickerTape() {
+  const payload = await fetchJson("/api/stocks?sort=symbol&direction=asc&limit=600");
+  renderTickerTape(payload.rows || []);
+}
+
+function renderTickerTape(rows) {
+  const track = $("tickerTrack");
+  if (!track) return;
+  const priced = rows.filter((row) => row.last_close !== null && row.last_close !== undefined);
+  if (!priced.length) {
+    track.innerHTML = '<span class="ticker-empty">No price data loaded.</span>';
+    return;
+  }
+  const items = priced.map(tickerItemHtml).join("");
+  track.innerHTML = `${items}${items}`;
+  track.style.setProperty("--ticker-duration", `${Math.max(55, priced.length * 1.15)}s`);
+}
+
+function tickerItemHtml(row) {
+  const daily = Number(row.return_1d);
+  const direction = Number.isFinite(daily) && daily < 0 ? "down" : "up";
+  const dailyText = Number.isFinite(daily) ? formatNumber(daily, { percent: true }) : "-";
+  return `<button class="ticker-item ${direction}" data-symbol="${escapeHtml(row.symbol)}" type="button">
+    <span class="ticker-symbol">${escapeHtml(row.symbol)}</span>
+    <span>${money(row.last_close)}</span>
+    <span class="ticker-change">${dailyText}</span>
+  </button>`;
+}
+
 function renderRows(rows) {
   const body = $("stockRows");
   body.innerHTML = rows
@@ -144,6 +173,16 @@ function renderRows(rows) {
     row.addEventListener("keydown", (event) => {
       if (event.key === "Enter") openDeepDive(row.dataset.symbol);
     });
+  });
+}
+
+function attachTickerEvents() {
+  const track = $("tickerTrack");
+  if (!track) return;
+  track.addEventListener("click", (event) => {
+    const item = event.target.closest(".ticker-item");
+    if (!item) return;
+    openDeepDive(item.dataset.symbol);
   });
 }
 
@@ -731,7 +770,9 @@ function setActive(groupId, button) {
 
 async function init() {
   attachEvents();
+  attachTickerEvents();
   await loadSummary();
+  await loadTickerTape();
   await loadStocks();
 }
 

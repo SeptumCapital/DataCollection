@@ -245,6 +245,124 @@ button:hover {
   font-size: 24px;
 }
 
+.ticker-tape {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  overflow: hidden;
+  margin-bottom: 18px;
+  border: 1px solid #15202b;
+  border-radius: 8px;
+  background: #0b1118;
+  box-shadow: var(--shadow);
+}
+
+.ticker-label {
+  align-self: stretch;
+  display: grid;
+  place-items: center;
+  min-width: 92px;
+  padding: 0 14px;
+  border-right: 1px solid rgba(255, 255, 255, 0.14);
+  background: #121a24;
+  color: #e5edf5;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ticker-window {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.ticker-window::before,
+.ticker-window::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 42px;
+  pointer-events: none;
+}
+
+.ticker-window::before {
+  left: 0;
+  background: linear-gradient(90deg, #0b1118, rgba(11, 17, 24, 0));
+}
+
+.ticker-window::after {
+  right: 0;
+  background: linear-gradient(270deg, #0b1118, rgba(11, 17, 24, 0));
+}
+
+.ticker-track {
+  --ticker-duration: 120s;
+  display: flex;
+  align-items: stretch;
+  width: max-content;
+  min-height: 44px;
+  animation: ticker-scroll var(--ticker-duration) linear infinite;
+}
+
+.ticker-tape:hover .ticker-track {
+  animation-play-state: paused;
+}
+
+.ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+  background: transparent;
+  color: #d8e1ea;
+  white-space: nowrap;
+}
+
+.ticker-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.ticker-item .ticker-symbol {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.ticker-change {
+  font-variant-numeric: tabular-nums;
+}
+
+.ticker-item.up .ticker-change {
+  color: #6ee7b7;
+}
+
+.ticker-item.down .ticker-change {
+  color: #fca5a5;
+}
+
+.ticker-empty {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  color: #9fb0c1;
+}
+
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 .content {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -677,6 +795,14 @@ canvas {
 
   .snapshot-grid {
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    width: 100%;
+    overflow-x: auto;
+    animation: none;
   }
 }
 
