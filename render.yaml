@@ -20,7 +20,33 @@ services:
         value: "17"
       - key: SENQUANT_REFRESH_MINUTE
         value: "30"
+      - key: SENQUANT_OLLAMA_HOSTPORT
+        fromService:
+          type: pserv
+          name: senquant-ollama
+          property: hostport
+      - key: SENQUANT_OLLAMA_MODEL
+        value: llama3.2:1b
+      - key: SENQUANT_OLLAMA_TIMEOUT_SECONDS
+        value: "6"
     disk:
       name: senquant-data
       mountPath: /var/data/senquant
       sizeGB: 10
+  - type: pserv
+    name: senquant-ollama
+    runtime: docker
+    plan: pro
+    dockerfilePath: ./deploy/ollama/Dockerfile
+    dockerContext: ./deploy/ollama
+    envVars:
+      - key: OLLAMA_MODEL
+        value: llama3.2:1b
+      - key: OLLAMA_HOST
+        value: 0.0.0.0:11434
+      - key: OLLAMA_MODELS
+        value: /var/data/ollama/models
+    disk:
+      name: senquant-ollama-models
+      mountPath: /var/data/ollama
+      sizeGB: 20

@@ -8,6 +8,7 @@ const state = {
   sector: null,
   sort: "symbol",
   direction: "asc",
+  chatProvider: "local",
 };
 
 const metricLabels = {
@@ -322,17 +323,28 @@ function renderTickerTape(rows) {
 function updateChatScope() {
   const scope = $("chatScope");
   if (!scope) return;
+  const prefix = state.chatProvider === "ollama" ? "Local Ollama assistant" : "Local data assistant";
   if (state.view === "deep" && state.selected) {
-    scope.textContent = `Local data assistant / ${state.selected}`;
+    scope.textContent = `${prefix} / ${state.selected}`;
   } else if (state.view === "sector" && state.sector) {
-    scope.textContent = `Local data assistant / ${state.sector}`;
+    scope.textContent = `${prefix} / ${state.sector}`;
   } else if (state.view === "recommendations") {
-    scope.textContent = "Local data assistant / recommendations";
+    scope.textContent = `${prefix} / recommendations`;
   } else if (state.view === "advancedRecommendations") {
-    scope.textContent = "Local data assistant / advanced recommendations";
+    scope.textContent = `${prefix} / advanced recommendations`;
   } else {
-    scope.textContent = "Local data assistant / dashboard";
+    scope.textContent = `${prefix} / dashboard`;
   }
+}
+
+async function loadChatStatus() {
+  try {
+    const payload = await fetchJson("/api/chat/status");
+    state.chatProvider = payload.enabled ? "ollama" : "local";
+  } catch (error) {
+    state.chatProvider = "local";
+  }
+  updateChatScope();
 }
 
 async function submitChat(question) {
@@ -363,6 +375,11 @@ function addChatMessage(role, text) {
 
 function chatResponseHtml(payload) {
   const parts = [`<p>${escapeHtml(payload.answer || "No answer returned.")}</p>`];
+  if (payload.assistant_provider === "ollama") {
+    parts.push('<p class="chat-meta">Answered by the local Ollama model using SenQuant data.</p>');
+  } else if (payload.llm_fallback) {
+    parts.push('<p class="chat-meta">Using the local data assistant while Ollama is unavailable.</p>');
+  }
   if (payload.rows?.length) parts.push(chatRowsTableHtml(payload.rows));
   if (payload.group_rows?.length) parts.push(chatGroupRowsHtml(payload.group_rows));
   if (payload.actions?.length) {
@@ -1463,6 +1480,7 @@ async function init() {
   attachSectorEvents();
   attachChatEvents();
   updateChatScope();
+  loadChatStatus().catch((error) => console.error("Chat status failed", error));
   await loadSummary();
   await loadStocks();
   loadTickerTape().catch((error) => console.error("Ticker tape failed", error));

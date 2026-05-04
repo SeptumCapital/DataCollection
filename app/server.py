@@ -14,6 +14,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
+from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -1317,29 +1318,121 @@ def chat_help_answer(store: DataStore) -> dict[str, object]:
     }
 
 
+def ollama_base_url() -> str | None:
+    raw = (
+        os.environ.get("SENQUANT_OLLAMA_BASE_URL")
+        or os.environ.get("SENQUANT_OLLAMA_HOSTPORT")
+        or os.environ.get("OLLAMA_BASE_URL")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    if not re.match(r"^https?://", raw):
+        raw = f"http://{raw}"
+    return raw.rstrip("/")
+
+
+def ollama_chat_enabled() -> bool:
+    disabled = os.environ.get("SENQUANT_ENABLE_OLLAMA_CHAT", "").lower() in {"0", "false", "no", "off"}
+    return bool(ollama_base_url()) and not disabled
+
+
+def ollama_chat_status() -> dict[str, object]:
+    return {
+        "enabled": ollama_chat_enabled(),
+        "base_url_configured": bool(ollama_base_url()),
+        "model": os.environ.get("SENQUANT_OLLAMA_MODEL") or os.environ.get("OLLAMA_MODEL") or "llama3.2:1b",
+        "timeout_seconds": safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 6.0,
+    }
+
+
+def compact_chat_payload(question: str, local_response: dict[str, object]) -> dict[str, object]:
+    return {
+        "question": question[:1000],
+        "local_answer": local_response.get("answer"),
+        "stock_rows": list(local_response.get("rows") or [])[:10],
+        "group_rows": list(local_response.get("group_rows") or [])[:10],
+    }
+
+
+def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | None:
+    base_url = ollama_base_url()
+    if not base_url:
+        return None
+
+    model = os.environ.get("SENQUANT_OLLAMA_MODEL") or os.environ.get("OLLAMA_MODEL") or "llama3.2:1b"
+    timeout = safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 6.0
+    system_prompt = (
+        "You are SenQuant's local market data assistant. Answer only from the JSON data provided by the app. "
+        "Do not invent prices, returns, sectors, ratings, recommendations, or dates. "
+        "If the provided data does not answer the question, say that the loaded local data does not contain it. "
+        "Keep the answer concise and factual. Do not provide personalized financial advice."
+    )
+    user_payload = compact_chat_payload(question, local_response)
+    body = {
+        "model": model,
+        "stream": False,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": json.dumps(user_payload, separators=(",", ":"), default=str),
+            },
+        ],
+        "options": {"temperature": 0.1, "num_predict": 220},
+    }
+    request = Request(
+        f"{base_url}/api/chat",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:  # noqa: S310 - URL is operator-configured.
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"Ollama chat unavailable: {exc}", flush=True)
+        return None
+
+    message = payload.get("message") if isinstance(payload, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    content = str(content or "").strip()
+    return content or None
+
+
+def enrich_chat_response_with_ollama(question: str, local_response: dict[str, object]) -> dict[str, object]:
+    if not ollama_chat_enabled():
+        return {**local_response, "assistant_provider": "local"}
+
+    llm_answer = call_ollama_chat(question, local_response)
+    if not llm_answer:
+        return {**local_response, "assistant_provider": "local", "llm_fallback": True}
+    return {**local_response, "answer": llm_answer, "assistant_provider": "ollama"}
+
+
 def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, object]:
     question = str(payload.get("question") or "").strip()
     context = payload.get("context", {})
     context = context if isinstance(context, dict) else {}
     if not question:
-        return chat_help_answer(store)
+        return enrich_chat_response_with_ollama(question, chat_help_answer(store))
 
     lowered = question.lower()
     symbols = chat_find_symbols(store, question, context)
     if symbols:
-        return chat_stock_answer(store, symbols)
+        return enrich_chat_response_with_ollama(question, chat_stock_answer(store, symbols))
 
     sector = chat_find_sector(store, question, context)
     if sector:
-        return chat_sector_answer(store, sector, question)
+        return enrich_chat_response_with_ollama(question, chat_sector_answer(store, sector, question))
 
     if ("sector" in lowered or "industry" in lowered) and ("momentum" in lowered or "strongest" in lowered or "top" in lowered):
-        return chat_group_momentum_answer(store, question)
+        return enrich_chat_response_with_ollama(question, chat_group_momentum_answer(store, question))
 
     if re.search(r"\b(help|what can|examples|how do)\b", lowered):
-        return chat_help_answer(store)
+        return enrich_chat_response_with_ollama(question, chat_help_answer(store))
 
-    return chat_ranked_answer(store, question)
+    return enrich_chat_response_with_ollama(question, chat_ranked_answer(store, question))
 
 
 RECOMMENDATION_FEATURES = [
@@ -2082,6 +2175,7 @@ class AppHandler(BaseHTTPRequestHandler):
                         "has_universe": UNIVERSE_PATH.exists(),
                         "constituents": int(len(store.universe)),
                         "daily_refresh_enabled": refresh_enabled(),
+                        "ollama_chat": ollama_chat_status(),
                         "refresh_marker": REFRESH_MARKER_PATH.read_text(encoding="utf-8").strip()
                         if REFRESH_MARKER_PATH.exists()
                         else None,
@@ -2110,6 +2204,8 @@ class AppHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/group-momentum":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["3"])[0]) or 3
                 self.send_json(store.group_momentum_leaders(limit=limit))
+            elif parsed.path == "/api/chat/status":
+                self.send_json(ollama_chat_status())
             elif parsed.path == "/api/recommendations":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["15"])[0]) or 15
                 self.send_json(recommendation_payload(store, limit=limit, allow_compute=False))

@@ -228,6 +228,12 @@ button:hover {
   line-height: 1.45;
 }
 
+.chat-message .chat-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .chat-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

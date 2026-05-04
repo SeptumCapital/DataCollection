@@ -180,6 +180,20 @@ The app reads data from `SENQUANT_DATA_ROOT` when set, otherwise it reads the lo
 SENQUANT_DATA_ROOT=/var/data/senquant/data
 ```
 
+### Optional Local LLM Chat
+
+The dashboard chat can use a private Ollama service for local LLM explanations while keeping the existing deterministic data assistant as a fallback. The app first retrieves relevant SenQuant rows, then sends only that compact local-data payload to Ollama. If Ollama is unavailable or slow, the normal local assistant answer is returned.
+
+The included `render.yaml` defines a private Docker service named `senquant-ollama` with a persistent model disk and wires the web app to it through Render's private network:
+
+```text
+SENQUANT_OLLAMA_HOSTPORT=<private senquant-ollama host:port>
+SENQUANT_OLLAMA_MODEL=llama3.2:1b
+SENQUANT_OLLAMA_TIMEOUT_SECONDS=6
+```
+
+The Ollama service stores models under `/var/data/ollama/models` and pulls `OLLAMA_MODEL` on first boot. Start with `llama3.2:1b` for faster CPU responses. You can move to a larger model by changing both `OLLAMA_MODEL` on the private service and `SENQUANT_OLLAMA_MODEL` on the web service, then redeploying.
+
 The local collected dataset is large and intentionally excluded from Git. On Render, attach or create the persistent disk from `render.yaml`, then populate `/var/data/senquant/data` with the same folder layout shown in "Output Layout". The app will boot without data for health checks, but the browser is only useful after the data folder is populated.
 
 For custom domains, point GoDaddy DNS to the Render service after the temporary `onrender.com` URL works:
