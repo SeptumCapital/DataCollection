@@ -603,6 +603,14 @@ class DataStore:
         }
 
     def momentum_recommendations(self, limit: int = 10) -> dict[str, object]:
+        global MOMENTUM_CACHE
+        if (
+            MOMENTUM_CACHE["store_loaded_at"] == STORE_LOADED_AT
+            and MOMENTUM_CACHE["limit"] == limit
+            and MOMENTUM_CACHE["payload"] is not None
+        ):
+            return MOMENTUM_CACHE["payload"]
+
         rows: list[dict[str, object]] = []
         universe_meta = {
             safe_symbol(row.get("symbol", "")): row
@@ -661,12 +669,14 @@ class DataStore:
         ranked = []
         for index, row in enumerate(rows[:limit], start=1):
             ranked.append({"rank": index, **{key: jsonable(value) for key, value in row.items()}})
-        return {
+        payload = {
             "model": "12-month cross-sectional momentum",
             "universe": "S&P 500",
             "as_of": ranked[0]["last_date"] if ranked else None,
             "rows": ranked,
         }
+        MOMENTUM_CACHE = {"store_loaded_at": STORE_LOADED_AT, "limit": limit, "payload": payload}
+        return payload
 
     def enrichment(self, symbol: str) -> dict[str, object]:
         key = safe_symbol(symbol)
@@ -790,6 +800,7 @@ def resample_frame(frame: pd.DataFrame, interval: str) -> pd.DataFrame:
 STORE = DataStore.load()
 STORE_LOADED_AT = time.time()
 STORE_RELOAD_CHECKED_AT = 0.0
+MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "limit": 0, "payload": None}
 
 
 def current_store() -> DataStore:

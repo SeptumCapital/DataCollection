@@ -853,10 +853,10 @@ async function init() {
   attachEvents();
   attachTickerEvents();
   await loadSummary();
-  await loadTickerTape();
-  await loadMomentumRecommendations();
-  await loadMarketNews();
   await loadStocks();
+  loadTickerTape().catch((error) => console.error("Ticker tape failed", error));
+  loadMomentumRecommendations().catch((error) => console.error("Momentum recommendations failed", error));
+  loadMarketNews().catch((error) => console.error("Market news failed", error));
 }
 
 init().catch((error) => {
