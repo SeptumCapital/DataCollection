@@ -37,6 +37,20 @@ NEWS_DIR = DATA_ROOT / "news" / "yahoo"
 MARKET_NEWS_PATH = NEWS_DIR / "market.json"
 SOCIAL_DIR = DATA_ROOT / "social" / "twitter"
 
+SECTOR_NEWS_SYMBOLS = {
+    "Communication Services": "XLC",
+    "Consumer Discretionary": "XLY",
+    "Consumer Staples": "XLP",
+    "Energy": "XLE",
+    "Financials": "XLF",
+    "Health Care": "XLV",
+    "Industrials": "XLI",
+    "Information Technology": "XLK",
+    "Materials": "XLB",
+    "Real Estate": "XLRE",
+    "Utilities": "XLU",
+}
+
 DEFAULT_METRICS = ("adj_close", "volume", "return_21d", "rsi_14", "sma_50", "sma_200")
 FUNDAMENTAL_METRICS = (
     "revenue",
@@ -336,6 +350,37 @@ def fetch_or_load_market_news(max_age_seconds: int = 900) -> dict[str, object]:
     }
     write_json(MARKET_NEWS_PATH, payload)
     return payload
+
+
+def fetch_sector_news(sector: str, max_age_seconds: int = 1800) -> dict[str, object]:
+    symbol = SECTOR_NEWS_SYMBOLS.get(sector)
+    if not symbol:
+        return {"sector": sector, "provider": "not_configured", "items": []}
+    path = NEWS_DIR / "sectors" / f"{safe_symbol(sector)}.json"
+    if path.exists() and time.time() - path.stat().st_mtime < max_age_seconds:
+        return load_json(path)
+    if yf is None:
+        return {"sector": sector, "symbol": symbol, "provider": "yfinance/yahoo", "items": [], "error": "yfinance is not installed"}
+    try:
+        payload = {
+            "sector": sector,
+            "symbol": symbol,
+            "provider": "yfinance/yahoo",
+            "collected_at": pd.Timestamp.now("UTC").isoformat(),
+            "items": [
+                normalize_news_item(item)
+                for item in (yf.Ticker(symbol).news or [])[:20]
+                if isinstance(item, dict)
+            ],
+        }
+        write_json(path, payload)
+        return payload
+    except Exception as exc:  # noqa: BLE001
+        if path.exists():
+            payload = load_json(path)
+            payload["stale_error"] = str(exc)
+            return payload
+        return {"sector": sector, "symbol": symbol, "provider": "yfinance/yahoo", "items": [], "error": str(exc)}
 
 
 def load_social_posts(symbol: str) -> dict[str, object]:
@@ -790,6 +835,90 @@ class DataStore:
             },
         }
 
+    def sector_detail(self, sector: str) -> dict[str, object]:
+        members = self.stocks[self.stocks["sector"] == sector].copy()
+        if members.empty:
+            return {"sector": sector, "error": f"No stocks found for sector: {sector}"}
+
+        periods = {"1W": 5, "1M": 21, "3M": 63, "1Y": 252}
+        return_rows: list[dict[str, object]] = []
+        for row in members.to_dict("records"):
+            key = safe_symbol(str(row.get("symbol", "")))
+            path = TECHNICALS_DIR / f"{key}.csv"
+            if not path.exists():
+                continue
+            try:
+                frame = pd.read_csv(path, usecols=lambda column: column in {"date", "adj_close", "close", "sma_200", "rsi_14"})
+                frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+                frame = frame.dropna(subset=["date"]).sort_values("date")
+                close_col = "adj_close" if "adj_close" in frame.columns else "close"
+                close = pd.to_numeric(frame[close_col], errors="coerce")
+                valid = frame.assign(_close=close).dropna(subset=["_close"])
+                if len(valid) <= 5:
+                    continue
+                latest = valid.iloc[-1]
+                latest_close = safe_float(latest["_close"])
+                if latest_close is None:
+                    continue
+
+                item = {
+                    "symbol": row.get("symbol"),
+                    "name": row.get("name"),
+                    "industry": row.get("industry"),
+                    "last_date": latest["date"].date().isoformat(),
+                    "last_close": latest_close,
+                    "sma_200": safe_float(latest.get("sma_200")),
+                    "rsi_14": safe_float(latest.get("rsi_14")),
+                }
+                item["distance_from_sma_200"] = pct_change(item["sma_200"], latest_close)
+                for label, days in periods.items():
+                    if len(valid) <= days:
+                        item[label] = None
+                        continue
+                    start_value = safe_float(valid.iloc[-days - 1]["_close"])
+                    value = pct_change(start_value, latest_close)
+                    item[label] = value if value is not None and -0.95 <= value <= 5 else None
+                return_rows.append(item)
+            except Exception:
+                continue
+
+        frame = pd.DataFrame(return_rows)
+
+        def median_value(column: str) -> float | None:
+            if frame.empty or column not in frame.columns:
+                return None
+            values = pd.to_numeric(frame[column], errors="coerce").dropna()
+            return safe_float(values.median()) if not values.empty else None
+
+        performance = {
+            "return_1w": median_value("1W"),
+            "return_1m": median_value("1M"),
+            "return_3m": median_value("3M"),
+            "return_1y": median_value("1Y"),
+            "median_rsi_14": median_value("rsi_14"),
+            "median_distance_from_sma_200": median_value("distance_from_sma_200"),
+            "above_sma_200_pct": safe_float(
+                (pd.to_numeric(frame["distance_from_sma_200"], errors="coerce") > 0).mean()
+            )
+            if not frame.empty and "distance_from_sma_200" in frame.columns
+            else None,
+        }
+        leaders = frame.sort_values("1M", ascending=False, na_position="last").head(5).to_dict("records") if not frame.empty else []
+        laggards = frame.sort_values("1M", ascending=True, na_position="last").head(5).to_dict("records") if not frame.empty else []
+        member_rows = [
+            {key: jsonable(value) for key, value in record.items() if key != "symbol_key"}
+            for record in members.sort_values("symbol").to_dict("records")
+        ]
+        return {
+            "sector": sector,
+            "stock_count": int(len(members)),
+            "as_of": max((row.get("last_date") for row in return_rows), default=None),
+            "performance": {key: jsonable(value) for key, value in performance.items()},
+            "leaders_1m": [{key: jsonable(value) for key, value in row.items()} for row in leaders],
+            "laggards_1m": [{key: jsonable(value) for key, value in row.items()} for row in laggards],
+            "members": member_rows,
+        }
+
     def enrichment(self, symbol: str) -> dict[str, object]:
         key = safe_symbol(symbol)
         path = ENRICHMENT_DIR / f"{key}.json"
@@ -1021,6 +1150,12 @@ class AppHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/group-momentum":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["3"])[0]) or 3
                 self.send_json(store.group_momentum_leaders(limit=limit))
+            elif parsed.path.startswith("/api/sector/") and parsed.path.endswith("/news"):
+                sector = unquote(parsed.path.removeprefix("/api/sector/").removesuffix("/news"))
+                self.send_json(fetch_sector_news(sector))
+            elif parsed.path.startswith("/api/sector/"):
+                sector = unquote(parsed.path.removeprefix("/api/sector/"))
+                self.send_json(store.sector_detail(sector))
             elif parsed.path.startswith("/api/stock/") and parsed.path.endswith("/fundamentals"):
                 symbol = unquote(parsed.path.split("/")[3])
                 self.send_json(store.fundamentals(symbol, parse_qs(parsed.query)))

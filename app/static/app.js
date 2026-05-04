@@ -5,6 +5,7 @@ const state = {
   metrics: new Set(["adj_close"]),
   stocks: [],
   view: "dashboard",
+  sector: null,
   sort: "symbol",
   direction: "asc",
 };
@@ -66,6 +67,12 @@ function analystLabel(score) {
 function signedClass(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "";
   return Number(value) >= 0 ? "pos" : "neg";
+}
+
+function sectorLinkHtml(sector) {
+  if (!sector) return "-";
+  const label = escapeHtml(sector);
+  return `<button class="sector-link" type="button" data-sector="${label}" title="Open ${label} sector">${label}</button>`;
 }
 
 async function fetchJson(url) {
@@ -215,7 +222,7 @@ function groupMomentumList(title, rows) {
     ? rows
         .map(
           (row) => `<li>
-            <span>${escapeHtml(row.name)}</span>
+            <span>${title === "Sector" ? sectorLinkHtml(row.name) : escapeHtml(row.name)}</span>
             <strong class="${signedClass(row.momentum)}">${formatNumber(row.momentum, { percent: true })}</strong>
             <small>${formatNumber(row.stock_count, { digits: 0 })} stocks</small>
           </li>`
@@ -237,7 +244,7 @@ function renderMomentumRows(rows) {
       (row) => `<tr tabindex="0" data-symbol="${escapeHtml(row.symbol)}">
         <td>${row.rank}</td>
         <td><strong>${escapeHtml(row.symbol)}</strong><span>${money(row.last_close)}</span></td>
-        <td class="momentum-industry"><strong>${escapeHtml(row.sector || "-")}</strong><span>${escapeHtml(row.industry || "-")}</span></td>
+        <td class="momentum-industry"><strong>${sectorLinkHtml(row.sector)}</strong><span>${escapeHtml(row.industry || "-")}</span></td>
         <td class="${signedClass(row.return_1m)}">${formatNumber(row.return_1m, { percent: true })}</td>
         <td class="${signedClass(row.return_3m)}">${formatNumber(row.return_3m, { percent: true })}</td>
         <td class="${signedClass(row.return_12m)}">${formatNumber(row.return_12m, { percent: true })}</td>
@@ -308,7 +315,7 @@ function renderRows(rows) {
       <tr tabindex="0" data-symbol="${escapeHtml(row.symbol)}" class="${row.symbol === state.selected ? "active" : ""}">
         <td class="ticker-symbol">${escapeHtml(row.symbol)}</td>
         <td class="company-cell" title="${escapeHtml(row.name)}">${escapeHtml(row.name)}</td>
-        <td>${escapeHtml(row.sector || "-")}</td>
+        <td>${sectorLinkHtml(row.sector)}</td>
         <td>${money(row.last_close)}</td>
         <td class="${signedClass(row.return_21d)}">${formatNumber(row.return_21d, { percent: true })}</td>
         <td class="${signedClass(row.return_1y)}">${formatNumber(row.return_1y, { percent: true })}</td>
@@ -407,9 +414,135 @@ function renderSnapshot(meta) {
     .join("");
 }
 
+async function openSectorDive(sector) {
+  if (!sector) return;
+  state.view = "sector";
+  state.sector = sector;
+  $("dashboardView").classList.add("hidden");
+  $("deepDiveView").classList.add("hidden");
+  $("sectorDiveView").classList.remove("hidden");
+  document.body.classList.add("deep-mode");
+  window.scrollTo({ top: 0, behavior: "instant" });
+  await loadSectorDive(sector);
+}
+
+async function loadSectorDive(sector) {
+  $("sectorTitle").textContent = "Sector";
+  $("sectorName").textContent = sector;
+  $("sectorMeta").textContent = "Loading sector performance and members...";
+  $("sectorSnapshotGrid").innerHTML = "";
+  $("sectorLeaderRows").innerHTML = '<tr><td colspan="6">Loading leaders...</td></tr>';
+  $("sectorLaggardRows").innerHTML = '<tr><td colspan="6">Loading laggards...</td></tr>';
+  $("sectorMemberRows").innerHTML = '<tr><td colspan="14">Loading sector members...</td></tr>';
+  $("sectorNewsList").innerHTML = '<div class="market-news-empty">Loading sector news...</div>';
+
+  const payload = await fetchJson(`/api/sector/${encodeURIComponent(sector)}`);
+  $("sectorMeta").textContent = `${formatNumber(payload.stock_count, { digits: 0 })} S&P 500 members${payload.as_of ? ` / as of ${payload.as_of}` : ""}`;
+  $("sectorMemberSummary").textContent = `${formatNumber(payload.stock_count, { digits: 0 })} stocks in ${sector}`;
+  renderSectorSnapshot(payload.performance || {}, payload.stock_count);
+  renderSectorMoverRows("sectorLeaderRows", payload.leaders_1m || []);
+  renderSectorMoverRows("sectorLaggardRows", payload.laggards_1m || []);
+  renderSectorMemberRows(payload.members || []);
+  loadSectorNews(sector).catch((error) => {
+    $("sectorNewsSummary").textContent = error.message;
+    $("sectorNewsList").innerHTML = `<div class="market-news-empty">${escapeHtml(error.message)}</div>`;
+  });
+}
+
+function renderSectorSnapshot(performance, stockCount) {
+  const cards = [
+    ["Members", formatNumber(stockCount, { digits: 0 })],
+    ["1W Median", percent(performance.return_1w), signedClass(performance.return_1w)],
+    ["1M Median", percent(performance.return_1m), signedClass(performance.return_1m)],
+    ["3M Median", percent(performance.return_3m), signedClass(performance.return_3m)],
+    ["1Y Median", percent(performance.return_1y), signedClass(performance.return_1y)],
+    ["Above 200D", percent(performance.above_sma_200_pct), signedClass(performance.above_sma_200_pct)],
+    ["Median vs 200D", percent(performance.median_distance_from_sma_200), signedClass(performance.median_distance_from_sma_200)],
+    ["Median RSI", formatNumber(performance.median_rsi_14, { digits: 1 })],
+  ];
+  $("sectorSnapshotGrid").innerHTML = cards
+    .map(([label, value, klass]) => `<div class="snapshot-card"><span>${label}</span><strong class="${klass || ""}">${value}</strong></div>`)
+    .join("");
+}
+
+function renderSectorMoverRows(targetId, rows) {
+  const body = $(targetId);
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="6">No technical data available.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows
+    .map(
+      (row) => `<tr tabindex="0" data-symbol="${escapeHtml(row.symbol)}">
+        <td><strong>${escapeHtml(row.symbol)}</strong></td>
+        <td class="company-cell" title="${escapeHtml(row.name || "")}">${escapeHtml(row.name || "-")}</td>
+        <td class="${signedClass(row["1M"])}">${percent(row["1M"])}</td>
+        <td class="${signedClass(row["1Y"])}">${percent(row["1Y"])}</td>
+        <td class="${signedClass(row.distance_from_sma_200)}">${percent(row.distance_from_sma_200)}</td>
+        <td><button class="open-button" type="button" data-symbol="${escapeHtml(row.symbol)}">Open</button></td>
+      </tr>`
+    )
+    .join("");
+  bindStockOpenRows(body);
+}
+
+function renderSectorMemberRows(rows) {
+  const body = $("sectorMemberRows");
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="14">No stocks found for this sector.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows
+    .map(
+      (row) => `<tr tabindex="0" data-symbol="${escapeHtml(row.symbol)}">
+        <td class="ticker-symbol">${escapeHtml(row.symbol)}</td>
+        <td class="company-cell" title="${escapeHtml(row.name || "")}">${escapeHtml(row.name || "-")}</td>
+        <td class="company-cell" title="${escapeHtml(row.industry || "")}">${escapeHtml(row.industry || "-")}</td>
+        <td>${money(row.last_close)}</td>
+        <td class="${signedClass(row.return_21d)}">${percent(row.return_21d)}</td>
+        <td class="${signedClass(row.return_1y)}">${percent(row.return_1y)}</td>
+        <td>${formatNumber(row.rsi_14, { digits: 1 })}</td>
+        <td>${technicalBadges(row)}</td>
+        <td>${row.insider_buy_flag ? '<span class="flag buy">Buy</span>' : '<span class="flag neutral">-</span>'}</td>
+        <td>${percent(row.institutions_percent_held)}</td>
+        <td>${analystLabel(row.analyst_rating_score)}</td>
+        <td>${money(row.price_target_mean)}</td>
+        <td>${formatNumber(row.volume, { digits: 1 })}</td>
+        <td><button class="open-button" type="button" data-symbol="${escapeHtml(row.symbol)}">Open</button></td>
+      </tr>`
+    )
+    .join("");
+  bindStockOpenRows(body);
+}
+
+function bindStockOpenRows(container) {
+  container.querySelectorAll("tr[data-symbol]").forEach((row) => {
+    row.addEventListener("click", () => openDeepDive(row.dataset.symbol));
+    row.querySelector(".open-button")?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDeepDive(event.currentTarget.dataset.symbol);
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") openDeepDive(row.dataset.symbol);
+    });
+  });
+}
+
+async function loadSectorNews(sector) {
+  const payload = await fetchJson(`/api/sector/${encodeURIComponent(sector)}/news`);
+  const items = payload.items || [];
+  $("sectorNewsSummary").textContent = items.length
+    ? `${items.length} headlines for ${payload.symbol || sector}`
+    : payload.error || "No sector headlines returned.";
+  $("sectorNewsList").innerHTML = items.length
+    ? items.slice(0, 12).map(marketNewsItemHtml).join("")
+    : '<div class="market-news-empty">No sector headlines loaded.</div>';
+}
+
 async function openDeepDive(symbol) {
   state.view = "deep";
   $("dashboardView").classList.add("hidden");
+  $("sectorDiveView").classList.add("hidden");
   $("deepDiveView").classList.remove("hidden");
   document.body.classList.add("deep-mode");
   window.scrollTo({ top: 0, behavior: "instant" });
@@ -419,6 +552,7 @@ async function openDeepDive(symbol) {
 function showDashboard() {
   state.view = "dashboard";
   $("deepDiveView").classList.add("hidden");
+  $("sectorDiveView").classList.add("hidden");
   $("dashboardView").classList.remove("hidden");
   document.body.classList.remove("deep-mode");
   window.scrollTo({ top: 0, behavior: "instant" });
@@ -858,6 +992,20 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function attachSectorEvents() {
+  document.addEventListener(
+    "click",
+    (event) => {
+      const button = event.target.closest(".sector-link");
+      if (!button) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openSectorDive(button.dataset.sector);
+    },
+    true
+  );
+}
+
 function attachEvents() {
   const filterIds = [
     "searchInput",
@@ -900,6 +1048,7 @@ function attachEvents() {
   $("insiderBuyOnly").addEventListener("change", loadStocks);
   $("fundamentalMetric").addEventListener("change", loadFundamentals);
   $("backButton").addEventListener("click", showDashboard);
+  $("sectorBackButton").addEventListener("click", showDashboard);
   $("prevStockButton").addEventListener("click", () => navigateStock(-1));
   $("nextStockButton").addEventListener("click", () => navigateStock(1));
 
@@ -939,6 +1088,7 @@ function setActive(groupId, button) {
 async function init() {
   attachEvents();
   attachTickerEvents();
+  attachSectorEvents();
   await loadSummary();
   await loadStocks();
   loadTickerTape().catch((error) => console.error("Ticker tape failed", error));

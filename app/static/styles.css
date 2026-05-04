@@ -479,6 +479,40 @@ button:hover {
   background: #dbeafe;
 }
 
+.sector-link {
+  display: inline-block;
+  max-width: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-2);
+  font-size: inherit;
+  font-weight: 800;
+  line-height: 1.35;
+  text-align: left;
+  text-overflow: ellipsis;
+  text-decoration: underline;
+  text-decoration-color: rgba(29, 78, 216, 0.28);
+  text-underline-offset: 3px;
+  white-space: nowrap;
+}
+
+.sector-link:hover,
+.sector-link:focus {
+  border: 0;
+  color: #0f3ea4;
+  outline: none;
+  text-decoration-color: currentColor;
+}
+
+.momentum-industry .sector-link,
+.group-list-block .sector-link {
+  display: block;
+}
+
 .market-news-window {
   position: relative;
   height: 230px;
@@ -806,6 +840,32 @@ button:hover {
   display: block;
   margin-top: 6px;
   font-size: 18px;
+}
+
+.sector-overview-grid {
+  margin: 0 0 16px;
+}
+
+.sector-members-panel {
+  margin-top: 16px;
+}
+
+.sector-table-wrap {
+  max-height: 580px;
+}
+
+.sector-note {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sector-note strong {
+  color: var(--ink);
+  font-size: 14px;
 }
 
 .panel-header,

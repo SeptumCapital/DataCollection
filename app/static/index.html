@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SenQuant Data Browser</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260504-momentum1">
+    <link rel="stylesheet" href="/static/styles.css?v=20260504-sector1">
   </head>
   <body>
     <aside class="sidebar">
@@ -242,6 +242,126 @@
       </section>
       </div>
 
+      <section id="sectorDiveView" class="deep-dive hidden">
+        <div class="deep-topbar">
+          <button id="sectorBackButton" class="nav-button back-button">Back to Dashboard</button>
+          <div>
+            <div id="sectorTitle" class="ticker">Sector</div>
+            <h2 id="sectorName">Select a sector</h2>
+            <p id="sectorMeta">Performance, member stocks, and sector news</p>
+          </div>
+        </div>
+
+        <div class="snapshot-grid" id="sectorSnapshotGrid"></div>
+
+        <div class="enrichment-grid sector-overview-grid">
+          <section class="insight-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>1M Leaders</h2>
+                <p>Highest recent momentum inside this sector</p>
+              </div>
+            </div>
+            <div class="table-mini-wrap">
+              <table class="mini-table">
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th>Company</th>
+                    <th>1M</th>
+                    <th>1Y</th>
+                    <th>vs 200D</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="sectorLeaderRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="insight-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>1M Laggards</h2>
+                <p>Weakest recent momentum inside this sector</p>
+              </div>
+            </div>
+            <div class="table-mini-wrap">
+              <table class="mini-table">
+                <thead>
+                  <tr>
+                    <th>Ticker</th>
+                    <th>Company</th>
+                    <th>1M</th>
+                    <th>1Y</th>
+                    <th>vs 200D</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="sectorLaggardRows"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div class="enrichment-grid sector-overview-grid">
+          <section class="insight-panel sector-news-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Sector News</h2>
+                <p id="sectorNewsSummary">Latest sector ETF headlines when available</p>
+              </div>
+            </div>
+            <div class="news-list" id="sectorNewsList"></div>
+          </section>
+
+          <section class="insight-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Coverage</h2>
+                <p>Technical coverage and member universe</p>
+              </div>
+            </div>
+            <div class="sector-note">
+              <strong>Sector technicals</strong>
+              <p>Median returns summarize member stocks with available technical files. The member table mirrors the home screener fields for price, returns, ownership, analyst, and technical condition.</p>
+            </div>
+          </section>
+        </div>
+
+        <div class="table-panel sector-members-panel">
+          <div class="panel-header">
+            <div>
+              <h2>Sector Members</h2>
+              <p id="sectorMemberSummary">Stocks in this sector</p>
+            </div>
+          </div>
+          <div class="table-wrap sector-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Company</th>
+                  <th>Industry</th>
+                  <th>Price</th>
+                  <th>21D</th>
+                  <th>1Y</th>
+                  <th>RSI</th>
+                  <th>Tech</th>
+                  <th>Insider</th>
+                  <th>Inst</th>
+                  <th>Rating</th>
+                  <th>Target</th>
+                  <th>Volume</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="sectorMemberRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <section id="deepDiveView" class="deep-dive hidden">
         <div class="deep-topbar">
           <button id="backButton" class="nav-button back-button">Back to Dashboard</button>
@@ -421,6 +541,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260504-momentum1"></script>
+    <script src="/static/app.js?v=20260504-sector1"></script>
   </body>
 </html>
