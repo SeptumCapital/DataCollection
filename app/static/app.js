@@ -32,6 +32,8 @@ const metricLabels = {
 
 const colors = ["#0f766e", "#1d4ed8", "#b45309", "#7c3aed", "#be123c", "#334155"];
 const textSorts = new Set(["symbol", "name", "sector"]);
+let recommendationsPollTimer = null;
+let advancedRecommendationsPollTimer = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -459,17 +461,44 @@ async function loadRecommendations() {
   $("sellRecommendationRows").innerHTML = '<tr><td colspan="11">Loading sell list...</td></tr>';
   try {
     const payload = await fetchJson("/api/recommendations?limit=15");
-    $("recommendationsMeta").textContent = `${payload.universe || "S&P 500"} / as of ${payload.as_of || "latest close"} / ${formatNumber(payload.model?.training_samples, { digits: 0 })} training samples`;
+    $("recommendationsMeta").textContent = recommendationMetaText(payload);
     $("recommendationsDisclaimer").textContent = payload.disclaimer || "Beta model output for research only. Not financial advice.";
     $("recommendationsModelName").textContent = payload.model?.name || "Local quant model";
     renderRecommendationMethodology(payload);
-    renderRecommendationRows("buyRecommendationRows", payload.buy || []);
-    renderRecommendationRows("sellRecommendationRows", payload.sell || []);
+    if (payload.status === "building" && !(payload.buy || []).length) {
+      renderRecommendationBuildingRows("buyRecommendationRows", 11, payload.message);
+      renderRecommendationBuildingRows("sellRecommendationRows", 11, payload.message);
+    } else {
+      renderRecommendationRows("buyRecommendationRows", payload.buy || []);
+      renderRecommendationRows("sellRecommendationRows", payload.sell || []);
+    }
+    scheduleRecommendationPoll(payload);
   } catch (error) {
     $("recommendationsMeta").textContent = error.message;
     $("buyRecommendationRows").innerHTML = `<tr><td colspan="11">${escapeHtml(error.message)}</td></tr>`;
     $("sellRecommendationRows").innerHTML = `<tr><td colspan="11">${escapeHtml(error.message)}</td></tr>`;
   }
+}
+
+function recommendationMetaText(payload) {
+  const pieces = [
+    payload.universe || "S&P 500",
+    payload.as_of ? `as of ${payload.as_of}` : "latest close",
+    `${formatNumber(payload.model?.training_samples, { digits: 0 })} training samples`,
+  ];
+  if (payload.status && payload.status !== "ready") pieces.push(payload.message || payload.status);
+  return pieces.join(" / ");
+}
+
+function scheduleRecommendationPoll(payload) {
+  clearTimeout(recommendationsPollTimer);
+  if (["building", "stale_rebuilding"].includes(payload.status)) {
+    recommendationsPollTimer = setTimeout(loadRecommendations, 8000);
+  }
+}
+
+function renderRecommendationBuildingRows(targetId, colspan, message) {
+  $(targetId).innerHTML = `<tr><td colspan="${colspan}">${escapeHtml(message || "Building recommendations in the background...")}</td></tr>`;
 }
 
 function renderRecommendationMethodology(payload) {
@@ -532,16 +561,29 @@ async function loadAdvancedRecommendations() {
   $("advancedSellRecommendationRows").innerHTML = '<tr><td colspan="12">Loading advanced sell list...</td></tr>';
   try {
     const payload = await fetchJson("/api/recommendations/advanced?limit=15");
-    $("advancedRecommendationsMeta").textContent = `${payload.universe || "S&P 500"} / as of ${payload.as_of || "latest close"} / ${formatNumber(payload.model?.training_samples, { digits: 0 })} training samples`;
+    $("advancedRecommendationsMeta").textContent = recommendationMetaText(payload);
     $("advancedRecommendationsDisclaimer").textContent = payload.disclaimer || "Advanced beta model output for research only. Not financial advice.";
     $("advancedRecommendationsModelName").textContent = payload.model?.name || "Advanced statistical and machine learning ensemble";
     renderAdvancedRecommendationMethodology(payload);
-    renderAdvancedRecommendationRows("advancedBuyRecommendationRows", payload.buy || []);
-    renderAdvancedRecommendationRows("advancedSellRecommendationRows", payload.sell || []);
+    if (payload.status === "building" && !(payload.buy || []).length) {
+      renderRecommendationBuildingRows("advancedBuyRecommendationRows", 12, payload.message);
+      renderRecommendationBuildingRows("advancedSellRecommendationRows", 12, payload.message);
+    } else {
+      renderAdvancedRecommendationRows("advancedBuyRecommendationRows", payload.buy || []);
+      renderAdvancedRecommendationRows("advancedSellRecommendationRows", payload.sell || []);
+    }
+    scheduleAdvancedRecommendationPoll(payload);
   } catch (error) {
     $("advancedRecommendationsMeta").textContent = error.message;
     $("advancedBuyRecommendationRows").innerHTML = `<tr><td colspan="12">${escapeHtml(error.message)}</td></tr>`;
     $("advancedSellRecommendationRows").innerHTML = `<tr><td colspan="12">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function scheduleAdvancedRecommendationPoll(payload) {
+  clearTimeout(advancedRecommendationsPollTimer);
+  if (["building", "stale_rebuilding"].includes(payload.status)) {
+    advancedRecommendationsPollTimer = setTimeout(loadAdvancedRecommendations, 10000);
   }
 }
 
@@ -706,6 +748,8 @@ function renderSnapshot(meta) {
 
 async function openSectorDive(sector) {
   if (!sector) return;
+  clearTimeout(recommendationsPollTimer);
+  clearTimeout(advancedRecommendationsPollTimer);
   state.view = "sector";
   state.sector = sector;
   $("dashboardView").classList.add("hidden");
@@ -833,6 +877,8 @@ async function loadSectorNews(sector) {
 }
 
 async function openDeepDive(symbol) {
+  clearTimeout(recommendationsPollTimer);
+  clearTimeout(advancedRecommendationsPollTimer);
   state.view = "deep";
   state.selected = symbol;
   $("dashboardView").classList.add("hidden");
@@ -848,6 +894,8 @@ async function openDeepDive(symbol) {
 
 function showDashboard() {
   state.view = "dashboard";
+  clearTimeout(recommendationsPollTimer);
+  clearTimeout(advancedRecommendationsPollTimer);
   $("deepDiveView").classList.add("hidden");
   $("sectorDiveView").classList.add("hidden");
   $("recommendationsView").classList.add("hidden");

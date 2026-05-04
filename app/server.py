@@ -1050,6 +1050,9 @@ MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "limit": 0, "payloa
 GROUP_MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
 RECOMMENDATION_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
 ADVANCED_RECOMMENDATION_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
+RECOMMENDATION_BUILD_LOCK = threading.Lock()
+ADVANCED_RECOMMENDATION_BUILD_LOCK = threading.Lock()
+ADVANCED_RECOMMENDATION_DELAY_STATE: dict[str, bool] = {"scheduled": False}
 
 CHAT_ROW_COLUMNS = [
     "symbol",
@@ -1495,17 +1498,98 @@ def recommendation_reason(row: dict[str, object], signal: str) -> str:
     return ", ".join(reasons[:4]) or "ranked by ensemble score"
 
 
-def recommendation_payload(store: DataStore, limit: int = 15) -> dict[str, object]:
-    global RECOMMENDATION_CACHE
-    if RECOMMENDATION_CACHE["store_loaded_at"] == STORE_LOADED_AT and RECOMMENDATION_CACHE["payload"] is not None:
-        payload = RECOMMENDATION_CACHE["payload"]
-        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
-
+def recommendation_cache_fresh(path: Path) -> bool:
+    if not path.exists():
+        return False
     marker_mtime = REFRESH_MARKER_PATH.stat().st_mtime if REFRESH_MARKER_PATH.exists() else 0
-    if RECOMMENDATIONS_PATH.exists() and RECOMMENDATIONS_PATH.stat().st_mtime >= marker_mtime:
+    return path.stat().st_mtime >= marker_mtime
+
+
+def limited_recommendation_payload(payload: dict[str, object], limit: int) -> dict[str, object]:
+    return {
+        **payload,
+        "buy": payload.get("buy", [])[:limit],
+        "sell": payload.get("sell", [])[:limit],
+    }
+
+
+def building_recommendation_payload(kind: str) -> dict[str, object]:
+    label = "advanced recommendations" if kind == "advanced" else "recommendations"
+    return {
+        "status": "building",
+        "message": f"Building {label} in the background. This page will refresh automatically.",
+        "universe": "S&P 500",
+        "disclaimer": "Beta model output for research only. Not financial advice.",
+        "methodology": [],
+        "model": {"name": "Building model", "training_samples": 0},
+        "buy": [],
+        "sell": [],
+    }
+
+
+def start_recommendation_build(kind: str) -> None:
+    lock = ADVANCED_RECOMMENDATION_BUILD_LOCK if kind == "advanced" else RECOMMENDATION_BUILD_LOCK
+    if lock.locked():
+        return
+
+    def worker() -> None:
+        with lock:
+            try:
+                store = current_store()
+                if kind == "advanced":
+                    advanced_recommendation_payload(store, limit=15, allow_compute=True, force_rebuild=True)
+                else:
+                    recommendation_payload(store, limit=15, allow_compute=True, force_rebuild=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"Background {kind} recommendation build failed: {exc}", flush=True)
+
+    thread = threading.Thread(target=worker, name=f"{kind}-recommendation-build", daemon=True)
+    thread.start()
+
+
+def start_advanced_recommendation_build_later(delay_seconds: int = 90) -> None:
+    if ADVANCED_RECOMMENDATION_BUILD_LOCK.locked() or ADVANCED_RECOMMENDATION_DELAY_STATE["scheduled"]:
+        return
+    ADVANCED_RECOMMENDATION_DELAY_STATE["scheduled"] = True
+
+    def delayed_worker() -> None:
+        try:
+            time.sleep(delay_seconds)
+            if not recommendation_cache_fresh(ADVANCED_RECOMMENDATIONS_PATH):
+                start_recommendation_build("advanced")
+        finally:
+            ADVANCED_RECOMMENDATION_DELAY_STATE["scheduled"] = False
+
+    thread = threading.Thread(target=delayed_worker, name="advanced-recommendation-build-delay", daemon=True)
+    thread.start()
+
+
+def recommendation_payload(
+    store: DataStore,
+    limit: int = 15,
+    allow_compute: bool = True,
+    force_rebuild: bool = False,
+) -> dict[str, object]:
+    global RECOMMENDATION_CACHE
+    if (
+        not force_rebuild
+        and RECOMMENDATION_CACHE["store_loaded_at"] == STORE_LOADED_AT
+        and RECOMMENDATION_CACHE["payload"] is not None
+    ):
+        payload = RECOMMENDATION_CACHE["payload"]
+        return limited_recommendation_payload(payload, limit)
+
+    if not force_rebuild and RECOMMENDATIONS_PATH.exists():
         payload = load_json(RECOMMENDATIONS_PATH)
         RECOMMENDATION_CACHE = {"store_loaded_at": STORE_LOADED_AT, "payload": payload}
-        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+        if not recommendation_cache_fresh(RECOMMENDATIONS_PATH):
+            payload = {**payload, "status": "stale_rebuilding", "message": "Showing cached recommendations while rebuilding from newer data."}
+            start_recommendation_build("basic")
+        return limited_recommendation_payload(payload, limit)
+
+    if not allow_compute:
+        start_recommendation_build("basic")
+        return building_recommendation_payload("basic")
 
     universe_meta = {
         safe_symbol(row.get("symbol", "")): row
@@ -1619,6 +1703,7 @@ def recommendation_payload(store: DataStore, limit: int = 15) -> dict[str, objec
     buy = output_rows(frame.head(25), "BUY")
     sell = output_rows(frame.tail(25).sort_values("quant_score", ascending=True), "SELL")
     payload = {
+        "status": "ready",
         "as_of": max(as_of_dates) if as_of_dates else None,
         "universe": "S&P 500",
         "disclaimer": "Beta model output for research only. Not financial advice.",
@@ -1707,20 +1792,32 @@ def collect_recommendation_training_data(store: DataStore) -> tuple[list[dict[st
     return training_samples, latest_rows, as_of_dates
 
 
-def advanced_recommendation_payload(store: DataStore, limit: int = 15) -> dict[str, object]:
+def advanced_recommendation_payload(
+    store: DataStore,
+    limit: int = 15,
+    allow_compute: bool = True,
+    force_rebuild: bool = False,
+) -> dict[str, object]:
     global ADVANCED_RECOMMENDATION_CACHE
     if (
-        ADVANCED_RECOMMENDATION_CACHE["store_loaded_at"] == STORE_LOADED_AT
+        not force_rebuild
+        and ADVANCED_RECOMMENDATION_CACHE["store_loaded_at"] == STORE_LOADED_AT
         and ADVANCED_RECOMMENDATION_CACHE["payload"] is not None
     ):
         payload = ADVANCED_RECOMMENDATION_CACHE["payload"]
-        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+        return limited_recommendation_payload(payload, limit)
 
-    marker_mtime = REFRESH_MARKER_PATH.stat().st_mtime if REFRESH_MARKER_PATH.exists() else 0
-    if ADVANCED_RECOMMENDATIONS_PATH.exists() and ADVANCED_RECOMMENDATIONS_PATH.stat().st_mtime >= marker_mtime:
+    if not force_rebuild and ADVANCED_RECOMMENDATIONS_PATH.exists():
         payload = load_json(ADVANCED_RECOMMENDATIONS_PATH)
         ADVANCED_RECOMMENDATION_CACHE = {"store_loaded_at": STORE_LOADED_AT, "payload": payload}
-        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+        if not recommendation_cache_fresh(ADVANCED_RECOMMENDATIONS_PATH):
+            payload = {**payload, "status": "stale_rebuilding", "message": "Showing cached advanced recommendations while rebuilding from newer data."}
+            start_recommendation_build("advanced")
+        return limited_recommendation_payload(payload, limit)
+
+    if not allow_compute:
+        start_recommendation_build("advanced")
+        return building_recommendation_payload("advanced")
 
     try:
         from sklearn.decomposition import PCA
@@ -1729,9 +1826,10 @@ def advanced_recommendation_payload(store: DataStore, limit: int = 15) -> dict[s
         from sklearn.pipeline import make_pipeline
         from sklearn.preprocessing import RobustScaler
     except ImportError as exc:
-        base = recommendation_payload(store, limit=25)
+        base = recommendation_payload(store, limit=25, allow_compute=allow_compute)
         payload = {
             **base,
+            "status": "fallback",
             "advanced_unavailable": True,
             "error": f"Advanced ML libraries are not installed in this environment: {exc}",
             "model": {
@@ -1744,7 +1842,7 @@ def advanced_recommendation_payload(store: DataStore, limit: int = 15) -> dict[s
                 *base.get("methodology", []),
             ],
         }
-        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+        return limited_recommendation_payload(payload, limit)
 
     training_samples, latest_rows, as_of_dates = collect_recommendation_training_data(store)
     frame = pd.DataFrame(latest_rows)
@@ -1872,6 +1970,7 @@ def advanced_recommendation_payload(store: DataStore, limit: int = 15) -> dict[s
     buy = rows(frame.head(30), "BUY")
     sell = rows(frame.tail(30).sort_values("advanced_score", ascending=True), "SELL")
     payload = {
+        "status": "ready",
         "as_of": max(as_of_dates) if as_of_dates else None,
         "universe": "S&P 500",
         "disclaimer": "Advanced beta model output for research only. Not financial advice.",
@@ -1894,7 +1993,7 @@ def advanced_recommendation_payload(store: DataStore, limit: int = 15) -> dict[s
     }
     ADVANCED_RECOMMENDATION_CACHE = {"store_loaded_at": STORE_LOADED_AT, "payload": payload}
     write_json(ADVANCED_RECOMMENDATIONS_PATH, payload)
-    return {**payload, "buy": buy[:limit], "sell": sell[:limit]}
+    return limited_recommendation_payload(payload, limit)
 
 
 def current_store() -> DataStore:
@@ -1946,6 +2045,8 @@ def daily_refresh_loop() -> None:
         try:
             result = refresh_daily_market_data()
             print(f"Daily market refresh complete: {result}", flush=True)
+            start_recommendation_build("basic")
+            start_advanced_recommendation_build_later(delay_seconds=120)
         except Exception as exc:  # noqa: BLE001
             print(f"Daily market refresh failed: {exc}", flush=True)
 
@@ -1955,6 +2056,13 @@ def start_daily_refresh_thread() -> None:
         return
     thread = threading.Thread(target=daily_refresh_loop, name="daily-market-refresh", daemon=True)
     thread.start()
+
+
+def start_recommendation_prewarm_threads() -> None:
+    if not recommendation_cache_fresh(RECOMMENDATIONS_PATH):
+        start_recommendation_build("basic")
+    if not recommendation_cache_fresh(ADVANCED_RECOMMENDATIONS_PATH):
+        start_advanced_recommendation_build_later(delay_seconds=120)
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -2004,10 +2112,10 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_json(store.group_momentum_leaders(limit=limit))
             elif parsed.path == "/api/recommendations":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["15"])[0]) or 15
-                self.send_json(recommendation_payload(store, limit=limit))
+                self.send_json(recommendation_payload(store, limit=limit, allow_compute=False))
             elif parsed.path == "/api/recommendations/advanced":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["15"])[0]) or 15
-                self.send_json(advanced_recommendation_payload(store, limit=limit))
+                self.send_json(advanced_recommendation_payload(store, limit=limit, allow_compute=False))
             elif parsed.path.startswith("/api/sector/") and parsed.path.endswith("/news"):
                 sector = unquote(parsed.path.removeprefix("/api/sector/").removesuffix("/news"))
                 self.send_json(fetch_sector_news(sector))
@@ -2083,6 +2191,7 @@ def main() -> None:
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), AppHandler)
     start_daily_refresh_thread()
+    start_recommendation_prewarm_threads()
     print(f"SenQuant Data Browser running at http://{args.host}:{args.port}")
     server.serve_forever()
 
