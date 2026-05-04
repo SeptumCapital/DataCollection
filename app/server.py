@@ -38,6 +38,7 @@ NEWS_DIR = DATA_ROOT / "news" / "yahoo"
 MARKET_NEWS_PATH = NEWS_DIR / "market.json"
 SOCIAL_DIR = DATA_ROOT / "social" / "twitter"
 RECOMMENDATIONS_PATH = DATA_ROOT / "recommendations" / "local_quant_recommendations.json"
+ADVANCED_RECOMMENDATIONS_PATH = DATA_ROOT / "recommendations" / "advanced_quant_recommendations.json"
 
 SECTOR_NEWS_SYMBOLS = {
     "Communication Services": "XLC",
@@ -1048,6 +1049,7 @@ STORE_RELOAD_CHECKED_AT = 0.0
 MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "limit": 0, "payload": None}
 GROUP_MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
 RECOMMENDATION_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
+ADVANCED_RECOMMENDATION_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
 
 CHAT_ROW_COLUMNS = [
     "symbol",
@@ -1641,6 +1643,260 @@ def recommendation_payload(store: DataStore, limit: int = 15) -> dict[str, objec
     return {**payload, "buy": buy[:limit], "sell": sell[:limit]}
 
 
+def collect_recommendation_training_data(store: DataStore) -> tuple[list[dict[str, float]], list[dict[str, object]], list[str]]:
+    universe_meta = {
+        safe_symbol(row.get("symbol", "")): row
+        for row in store.stocks.to_dict("records")
+        if row.get("symbol")
+    }
+    training_samples: list[dict[str, float]] = []
+    latest_rows: list[dict[str, object]] = []
+    as_of_dates: list[str] = []
+
+    for path in sorted(TECHNICALS_DIR.glob("*.csv")):
+        frame = load_recommendation_frame(path)
+        if frame is None:
+            continue
+        close_col = "adj_close" if "adj_close" in frame.columns else "close"
+        close = numeric_series(frame, close_col)
+        key = path.stem.upper()
+        meta = universe_meta.get(key, {})
+        for index in range(252, len(frame) - 21, 21):
+            features = technical_feature_row(frame, index)
+            if not features:
+                continue
+            current = finite_float(close.iloc[index])
+            future = finite_float(close.iloc[index + 21])
+            target = pct_change(current, future)
+            if target is None or target < -0.75 or target > 1.5:
+                continue
+            training_samples.append(
+                {
+                    **features,
+                    "target_21d": float(target),
+                    "sector_code": float(abs(hash(str(meta.get("sector", "")))) % 97) / 97,
+                    "sample_age": float((len(frame) - index) / max(1, len(frame))),
+                }
+            )
+
+        latest_features = technical_feature_row(frame, len(frame) - 1)
+        if not latest_features:
+            continue
+        current = finite_float(close.iloc[-1])
+        sma_200 = finite_float(frame.iloc[-1].get("sma_200"))
+        latest_rows.append(
+            {
+                **latest_features,
+                "symbol": meta.get("symbol") or key,
+                "name": meta.get("name", ""),
+                "sector": meta.get("sector", ""),
+                "industry": meta.get("industry", ""),
+                "last_date": frame.iloc[-1]["date"].date().isoformat(),
+                "last_close": current,
+                "rsi_14": finite_float(frame.iloc[-1].get("rsi_14")),
+                "sma_200": sma_200,
+                "distance_from_sma_200": pct_change(sma_200, current),
+                "insider_buy_flag": bool(meta.get("insider_buy_flag")),
+                "institutions_percent_held": safe_float(meta.get("institutions_percent_held")),
+                "analyst_rating_score": safe_float(meta.get("analyst_rating_score")),
+                "price_target_mean": safe_float(meta.get("price_target_mean")),
+            }
+        )
+        as_of_dates.append(frame.iloc[-1]["date"].date().isoformat())
+
+    return training_samples, latest_rows, as_of_dates
+
+
+def advanced_recommendation_payload(store: DataStore, limit: int = 15) -> dict[str, object]:
+    global ADVANCED_RECOMMENDATION_CACHE
+    if (
+        ADVANCED_RECOMMENDATION_CACHE["store_loaded_at"] == STORE_LOADED_AT
+        and ADVANCED_RECOMMENDATION_CACHE["payload"] is not None
+    ):
+        payload = ADVANCED_RECOMMENDATION_CACHE["payload"]
+        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+
+    marker_mtime = REFRESH_MARKER_PATH.stat().st_mtime if REFRESH_MARKER_PATH.exists() else 0
+    if ADVANCED_RECOMMENDATIONS_PATH.exists() and ADVANCED_RECOMMENDATIONS_PATH.stat().st_mtime >= marker_mtime:
+        payload = load_json(ADVANCED_RECOMMENDATIONS_PATH)
+        ADVANCED_RECOMMENDATION_CACHE = {"store_loaded_at": STORE_LOADED_AT, "payload": payload}
+        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+
+    try:
+        from sklearn.decomposition import PCA
+        from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor, RandomForestRegressor
+        from sklearn.linear_model import ElasticNetCV, HuberRegressor
+        from sklearn.pipeline import make_pipeline
+        from sklearn.preprocessing import RobustScaler
+    except ImportError as exc:
+        base = recommendation_payload(store, limit=25)
+        payload = {
+            **base,
+            "advanced_unavailable": True,
+            "error": f"Advanced ML libraries are not installed in this environment: {exc}",
+            "model": {
+                **base.get("model", {}),
+                "name": "Fallback local ridge regression plus quant factor ensemble",
+            },
+            "methodology": [
+                "Advanced model unavailable locally because scikit-learn/scipy are missing.",
+                "Render will install scikit-learn/scipy from requirements.txt and use the full advanced ensemble.",
+                *base.get("methodology", []),
+            ],
+        }
+        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+
+    training_samples, latest_rows, as_of_dates = collect_recommendation_training_data(store)
+    frame = pd.DataFrame(latest_rows)
+    if len(training_samples) < 500 or frame.empty:
+        return {"error": "Not enough data for advanced recommendations", "buy": [], "sell": []}
+
+    advanced_features = [
+        *RECOMMENDATION_FEATURES,
+        "target_upside",
+        "analyst_factor",
+        "institutions_percent_held",
+        "insider_factor",
+    ]
+    train = pd.DataFrame(training_samples)
+    train["target_upside"] = 0.0
+    train["analyst_factor"] = 0.0
+    train["institutions_percent_held"] = 0.0
+    train["insider_factor"] = 0.0
+    frame["target_upside"] = (
+        pd.to_numeric(frame["price_target_mean"], errors="coerce") / pd.to_numeric(frame["last_close"], errors="coerce")
+    ) - 1
+    frame["analyst_factor"] = -pd.to_numeric(frame["analyst_rating_score"], errors="coerce")
+    frame["insider_factor"] = frame["insider_buy_flag"].fillna(False).astype(float)
+
+    train_x = train[advanced_features].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    train_y = np.clip(pd.to_numeric(train["target_21d"], errors="coerce").fillna(0.0), -0.5, 0.5)
+    latest_x = frame[advanced_features].replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+    # Keep the heaviest ensemble bounded so the first Render request finishes predictably.
+    if len(train_x) > 80_000:
+        train_x = train_x.tail(80_000)
+        train_y = train_y.tail(80_000)
+
+    models = {
+        "elastic_net": make_pipeline(RobustScaler(), ElasticNetCV(l1_ratio=[0.15, 0.5, 0.85], cv=4, max_iter=5000)),
+        "huber": make_pipeline(RobustScaler(), HuberRegressor(epsilon=1.35, alpha=0.0005, max_iter=700)),
+        "hist_gradient_boosting": HistGradientBoostingRegressor(max_iter=220, learning_rate=0.045, l2_regularization=0.08, random_state=42),
+        "extra_trees": ExtraTreesRegressor(n_estimators=160, max_depth=8, min_samples_leaf=25, random_state=42, n_jobs=-1),
+        "random_forest": RandomForestRegressor(n_estimators=120, max_depth=8, min_samples_leaf=30, random_state=42, n_jobs=-1),
+    }
+
+    predictions: dict[str, np.ndarray] = {}
+    for name, model in models.items():
+        model.fit(train_x, train_y)
+        predictions[name] = np.clip(model.predict(latest_x), -0.5, 0.5)
+
+    pca = PCA(n_components=min(4, len(advanced_features)), random_state=42)
+    scaled_latest = RobustScaler().fit_transform(latest_x)
+    principal = pca.fit_transform(scaled_latest)
+    frame["pca_quality"] = standard_score(pd.Series(principal[:, 0], index=frame.index))
+    frame["ml_ensemble_21d"] = np.mean(np.column_stack(list(predictions.values())), axis=1)
+    frame["ml_dispersion"] = np.std(np.column_stack(list(predictions.values())), axis=1)
+    frame["sector_neutral_score"] = (
+        standard_score(frame["ml_ensemble_21d"])
+        + 0.30 * standard_score(frame["momentum_12_1"])
+        + 0.22 * standard_score(frame["trend_200"])
+        - 0.18 * standard_score(frame["volatility_21d"])
+        + 0.10 * standard_score(frame["target_upside"])
+        + 0.08 * standard_score(frame["analyst_factor"])
+    )
+    frame["sector_neutral_score"] = frame["sector_neutral_score"] - frame.groupby("sector")["sector_neutral_score"].transform("median")
+    frame["advanced_score"] = (
+        0.52 * standard_score(frame["ml_ensemble_21d"])
+        + 0.28 * standard_score(frame["sector_neutral_score"])
+        + 0.12 * standard_score(frame["pca_quality"])
+        - 0.08 * standard_score(frame["ml_dispersion"])
+    )
+    frame = frame.sort_values("advanced_score", ascending=False, na_position="last")
+
+    def advanced_reason(row: dict[str, object], signal: str) -> str:
+        parts: list[str] = []
+        ensemble = safe_float(row.get("ml_ensemble_21d"))
+        dispersion = safe_float(row.get("ml_dispersion"))
+        sector_score = safe_float(row.get("sector_neutral_score"))
+        trend_200 = safe_float(row.get("distance_from_sma_200"))
+        if signal == "BUY":
+            if ensemble is not None and ensemble > 0:
+                parts.append("positive multi-model forecast")
+            if sector_score is not None and sector_score > 0:
+                parts.append("sector-neutral strength")
+            if trend_200 is not None and trend_200 > 0:
+                parts.append("above 200D SMA")
+        else:
+            if ensemble is not None and ensemble < 0.01:
+                parts.append("weak multi-model forecast")
+            if sector_score is not None and sector_score < 0:
+                parts.append("sector-neutral weakness")
+            if trend_200 is not None and trend_200 < 0:
+                parts.append("below 200D SMA")
+        if dispersion is not None and dispersion < 0.02:
+            parts.append("models agree")
+        return ", ".join(parts[:4]) or recommendation_reason(row, signal)
+
+    def rows(selected: pd.DataFrame, signal: str) -> list[dict[str, object]]:
+        output: list[dict[str, object]] = []
+        for rank, row in enumerate(selected.to_dict("records"), start=1):
+            score = safe_float(row.get("advanced_score")) or 0
+            dispersion = safe_float(row.get("ml_dispersion")) or 0
+            confidence = "High" if abs(score) >= 1.15 and dispersion < 0.025 else "Medium" if abs(score) >= 0.55 else "Low"
+            item = {
+                "rank": rank,
+                "signal": signal,
+                "confidence": confidence,
+                "symbol": row.get("symbol"),
+                "name": row.get("name"),
+                "sector": row.get("sector"),
+                "industry": row.get("industry"),
+                "last_date": row.get("last_date"),
+                "last_close": row.get("last_close"),
+                "ml_expected_21d": row.get("ml_ensemble_21d"),
+                "advanced_score": row.get("advanced_score"),
+                "model_agreement": 1 - min(1, dispersion / 0.05),
+                "sector_neutral_score": row.get("sector_neutral_score"),
+                "momentum_12_1": row.get("momentum_12_1"),
+                "return_3m": row.get("return_3m"),
+                "return_1m": row.get("return_1m"),
+                "rsi_14": row.get("rsi_14"),
+                "distance_from_sma_200": row.get("distance_from_sma_200"),
+                "target_upside": row.get("target_upside"),
+                "reason": advanced_reason(row, signal),
+            }
+            output.append({key: jsonable(value) for key, value in item.items()})
+        return output
+
+    buy = rows(frame.head(30), "BUY")
+    sell = rows(frame.tail(30).sort_values("advanced_score", ascending=True), "SELL")
+    payload = {
+        "as_of": max(as_of_dates) if as_of_dates else None,
+        "universe": "S&P 500",
+        "disclaimer": "Advanced beta model output for research only. Not financial advice.",
+        "methodology": [
+            "Machine learning ensemble: ElasticNetCV, Huber regression, histogram gradient boosting, extra trees, and random forest.",
+            "Statistical layer: robust scaling, PCA factor extraction, sector-neutral residual scoring, model-agreement penalty, and volatility penalty.",
+            "Final score blends multi-model expected 21D return, sector-neutral strength, PCA quality factor, and forecast agreement.",
+        ],
+        "model": {
+            "name": "Advanced statistical and machine learning ensemble",
+            "target": "next 21 trading day return",
+            "training_samples": int(len(train_x)),
+            "raw_training_samples": int(len(training_samples)),
+            "models": list(models.keys()),
+            "features": advanced_features,
+            "pca_components": int(pca.n_components_),
+        },
+        "buy": buy,
+        "sell": sell,
+    }
+    ADVANCED_RECOMMENDATION_CACHE = {"store_loaded_at": STORE_LOADED_AT, "payload": payload}
+    write_json(ADVANCED_RECOMMENDATIONS_PATH, payload)
+    return {**payload, "buy": buy[:limit], "sell": sell[:limit]}
+
+
 def current_store() -> DataStore:
     global STORE, STORE_LOADED_AT, STORE_RELOAD_CHECKED_AT
     now = time.time()
@@ -1749,6 +2005,9 @@ class AppHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/recommendations":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["15"])[0]) or 15
                 self.send_json(recommendation_payload(store, limit=limit))
+            elif parsed.path == "/api/recommendations/advanced":
+                limit = safe_int(parse_qs(parsed.query).get("limit", ["15"])[0]) or 15
+                self.send_json(advanced_recommendation_payload(store, limit=limit))
             elif parsed.path.startswith("/api/sector/") and parsed.path.endswith("/news"):
                 sector = unquote(parsed.path.removeprefix("/api/sector/").removesuffix("/news"))
                 self.send_json(fetch_sector_news(sector))

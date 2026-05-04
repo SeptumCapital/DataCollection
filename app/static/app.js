@@ -326,6 +326,8 @@ function updateChatScope() {
     scope.textContent = `Local data assistant / ${state.sector}`;
   } else if (state.view === "recommendations") {
     scope.textContent = "Local data assistant / recommendations";
+  } else if (state.view === "advancedRecommendations") {
+    scope.textContent = "Local data assistant / advanced recommendations";
   } else {
     scope.textContent = "Local data assistant / dashboard";
   }
@@ -441,6 +443,7 @@ function bindChatActionButtons(root) {
 async function openRecommendations() {
   state.view = "recommendations";
   $("dashboardView").classList.add("hidden");
+  $("advancedRecommendationsView").classList.add("hidden");
   $("sectorDiveView").classList.add("hidden");
   $("deepDiveView").classList.add("hidden");
   $("recommendationsView").classList.remove("hidden");
@@ -501,6 +504,79 @@ function renderRecommendationRows(targetId, rows) {
         <td class="${signedClass(row.momentum_12_1)}">${percent(row.momentum_12_1)}</td>
         <td class="${signedClass(row.distance_from_sma_200)}">${percent(row.distance_from_sma_200)}</td>
         <td>${formatNumber(row.rsi_14, { digits: 1 })}</td>
+        <td><span class="confidence ${escapeHtml((row.confidence || "").toLowerCase())}">${escapeHtml(row.confidence || "-")}</span></td>
+        <td class="recommendation-reason" title="${escapeHtml(row.reason || "")}">${escapeHtml(row.reason || "-")}</td>
+        <td><button class="open-button" type="button" data-symbol="${escapeHtml(row.symbol)}">Open</button></td>
+      </tr>`
+    )
+    .join("");
+  bindStockOpenRows(body);
+}
+
+async function openAdvancedRecommendations() {
+  state.view = "advancedRecommendations";
+  $("dashboardView").classList.add("hidden");
+  $("recommendationsView").classList.add("hidden");
+  $("sectorDiveView").classList.add("hidden");
+  $("deepDiveView").classList.add("hidden");
+  $("advancedRecommendationsView").classList.remove("hidden");
+  document.body.classList.add("deep-mode");
+  updateChatScope();
+  window.scrollTo({ top: 0, behavior: "instant" });
+  await loadAdvancedRecommendations();
+}
+
+async function loadAdvancedRecommendations() {
+  $("advancedRecommendationsMeta").textContent = "Loading advanced model output...";
+  $("advancedBuyRecommendationRows").innerHTML = '<tr><td colspan="12">Loading advanced buy list...</td></tr>';
+  $("advancedSellRecommendationRows").innerHTML = '<tr><td colspan="12">Loading advanced sell list...</td></tr>';
+  try {
+    const payload = await fetchJson("/api/recommendations/advanced?limit=15");
+    $("advancedRecommendationsMeta").textContent = `${payload.universe || "S&P 500"} / as of ${payload.as_of || "latest close"} / ${formatNumber(payload.model?.training_samples, { digits: 0 })} training samples`;
+    $("advancedRecommendationsDisclaimer").textContent = payload.disclaimer || "Advanced beta model output for research only. Not financial advice.";
+    $("advancedRecommendationsModelName").textContent = payload.model?.name || "Advanced statistical and machine learning ensemble";
+    renderAdvancedRecommendationMethodology(payload);
+    renderAdvancedRecommendationRows("advancedBuyRecommendationRows", payload.buy || []);
+    renderAdvancedRecommendationRows("advancedSellRecommendationRows", payload.sell || []);
+  } catch (error) {
+    $("advancedRecommendationsMeta").textContent = error.message;
+    $("advancedBuyRecommendationRows").innerHTML = `<tr><td colspan="12">${escapeHtml(error.message)}</td></tr>`;
+    $("advancedSellRecommendationRows").innerHTML = `<tr><td colspan="12">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function renderAdvancedRecommendationMethodology(payload) {
+  const methodology = payload.methodology || [];
+  const cards = [
+    ["Model", payload.model?.name || "Advanced ensemble"],
+    ["Target", payload.model?.target || "next 21 trading day return"],
+    ["Models", (payload.model?.models || []).join(", ")],
+    ["Features", (payload.model?.features || []).join(", ")],
+    ["Statistical Layer", methodology.join(" ")],
+  ];
+  $("advancedRecommendationsMethodology").innerHTML = cards
+    .map(([label, value]) => `<div class="methodology-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "-")}</strong></div>`)
+    .join("");
+}
+
+function renderAdvancedRecommendationRows(targetId, rows) {
+  const body = $(targetId);
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="12">No advanced recommendations available.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows
+    .map(
+      (row) => `<tr tabindex="0" data-symbol="${escapeHtml(row.symbol)}">
+        <td>${row.rank}</td>
+        <td><strong>${escapeHtml(row.symbol)}</strong><span>${money(row.last_close)}</span></td>
+        <td class="momentum-industry"><strong>${sectorLinkHtml(row.sector)}</strong><span>${escapeHtml(row.industry || "-")}</span></td>
+        <td class="${signedClass(row.advanced_score)}">${formatNumber(row.advanced_score, { digits: 2 })}</td>
+        <td class="${signedClass(row.ml_expected_21d)}">${percent(row.ml_expected_21d)}</td>
+        <td>${percent(row.model_agreement)}</td>
+        <td class="${signedClass(row.sector_neutral_score)}">${formatNumber(row.sector_neutral_score, { digits: 2 })}</td>
+        <td class="${signedClass(row.momentum_12_1)}">${percent(row.momentum_12_1)}</td>
+        <td class="${signedClass(row.distance_from_sma_200)}">${percent(row.distance_from_sma_200)}</td>
         <td><span class="confidence ${escapeHtml((row.confidence || "").toLowerCase())}">${escapeHtml(row.confidence || "-")}</span></td>
         <td class="recommendation-reason" title="${escapeHtml(row.reason || "")}">${escapeHtml(row.reason || "-")}</td>
         <td><button class="open-button" type="button" data-symbol="${escapeHtml(row.symbol)}">Open</button></td>
@@ -633,6 +709,7 @@ async function openSectorDive(sector) {
   state.view = "sector";
   state.sector = sector;
   $("dashboardView").classList.add("hidden");
+  $("advancedRecommendationsView").classList.add("hidden");
   $("recommendationsView").classList.add("hidden");
   $("deepDiveView").classList.add("hidden");
   $("sectorDiveView").classList.remove("hidden");
@@ -759,6 +836,7 @@ async function openDeepDive(symbol) {
   state.view = "deep";
   state.selected = symbol;
   $("dashboardView").classList.add("hidden");
+  $("advancedRecommendationsView").classList.add("hidden");
   $("recommendationsView").classList.add("hidden");
   $("sectorDiveView").classList.add("hidden");
   $("deepDiveView").classList.remove("hidden");
@@ -773,6 +851,7 @@ function showDashboard() {
   $("deepDiveView").classList.add("hidden");
   $("sectorDiveView").classList.add("hidden");
   $("recommendationsView").classList.add("hidden");
+  $("advancedRecommendationsView").classList.add("hidden");
   $("dashboardView").classList.remove("hidden");
   document.body.classList.remove("deep-mode");
   updateChatScope();
@@ -1291,6 +1370,9 @@ function attachEvents() {
   $("recommendationsBackButton").addEventListener("click", showDashboard);
   $("recommendationsLink").addEventListener("click", openRecommendations);
   $("recommendationsRefreshButton").addEventListener("click", loadRecommendations);
+  $("advancedRecommendationsLink").addEventListener("click", openAdvancedRecommendations);
+  $("advancedRecommendationsBackButton").addEventListener("click", openRecommendations);
+  $("advancedRecommendationsRefreshButton").addEventListener("click", loadAdvancedRecommendations);
   $("prevStockButton").addEventListener("click", () => navigateStock(-1));
   $("nextStockButton").addEventListener("click", () => navigateStock(1));
 

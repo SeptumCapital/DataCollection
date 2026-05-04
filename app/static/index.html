@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SenQuant Data Browser</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260504-recs1">
+    <link rel="stylesheet" href="/static/styles.css?v=20260504-advanced1">
   </head>
   <body>
     <aside class="sidebar">
@@ -278,7 +278,10 @@
             <h2>Stock Recommendations</h2>
             <p id="recommendationsMeta">Buy and sell lists based on local S&amp;P 500 data</p>
           </div>
-          <button id="recommendationsRefreshButton" class="nav-button" type="button">Refresh</button>
+          <div class="deep-actions">
+            <button id="advancedRecommendationsLink" class="nav-button advanced-link" type="button">Advanced Recommendations ( Beta)</button>
+            <button id="recommendationsRefreshButton" class="nav-button" type="button">Refresh</button>
+          </div>
         </div>
 
         <section class="recommendation-disclaimer">
@@ -354,6 +357,99 @@
                 </thead>
                 <tbody id="sellRecommendationRows">
                   <tr><td colspan="11">Loading sell list...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="advancedRecommendationsView" class="deep-dive hidden">
+        <div class="deep-topbar">
+          <button id="advancedRecommendationsBackButton" class="nav-button back-button">Back to Recommendations</button>
+          <div>
+            <div class="ticker">Advanced Beta Model</div>
+            <h2>Advanced Recommendations</h2>
+            <p id="advancedRecommendationsMeta">Statistical and machine learning ensemble</p>
+          </div>
+          <button id="advancedRecommendationsRefreshButton" class="nav-button" type="button">Refresh</button>
+        </div>
+
+        <section class="recommendation-disclaimer advanced">
+          <strong>Advanced beta, not financial advice.</strong>
+          <p id="advancedRecommendationsDisclaimer">These outputs use statistical and machine learning models on local S&amp;P 500 data for research only.</p>
+        </section>
+
+        <section class="recommendation-method">
+          <div class="panel-header compact">
+            <div>
+              <h2>Advanced Model Methodology</h2>
+              <p id="advancedRecommendationsModelName">Advanced statistical and machine learning ensemble</p>
+            </div>
+          </div>
+          <div id="advancedRecommendationsMethodology" class="methodology-grid"></div>
+        </section>
+
+        <div class="recommendations-grid">
+          <section class="table-panel recommendation-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Advanced Buy List</h2>
+                <p>Highest advanced ensemble scores</p>
+              </div>
+            </div>
+            <div class="table-wrap recommendations-table-wrap">
+              <table class="recommendations-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Ticker</th>
+                    <th>Sector</th>
+                    <th>Score</th>
+                    <th>ML 21D</th>
+                    <th>Agreement</th>
+                    <th>Sector Neutral</th>
+                    <th>12-1 Mom</th>
+                    <th>vs 200D</th>
+                    <th>Confidence</th>
+                    <th>Reason</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="advancedBuyRecommendationRows">
+                  <tr><td colspan="12">Loading advanced buy list...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="table-panel recommendation-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Advanced Sell List</h2>
+                <p>Lowest advanced ensemble scores</p>
+              </div>
+            </div>
+            <div class="table-wrap recommendations-table-wrap">
+              <table class="recommendations-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Ticker</th>
+                    <th>Sector</th>
+                    <th>Score</th>
+                    <th>ML 21D</th>
+                    <th>Agreement</th>
+                    <th>Sector Neutral</th>
+                    <th>12-1 Mom</th>
+                    <th>vs 200D</th>
+                    <th>Confidence</th>
+                    <th>Reason</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="advancedSellRecommendationRows">
+                  <tr><td colspan="12">Loading advanced sell list...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -660,6 +756,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260504-recs1"></script>
+    <script src="/static/app.js?v=20260504-advanced1"></script>
   </body>
 </html>

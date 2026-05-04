@@ -321,6 +321,21 @@ button:hover {
   background: #fef3c7;
 }
 
+.advanced-link {
+  min-width: 218px;
+  border-color: rgba(124, 58, 237, 0.24);
+  background: #f5f3ff;
+  color: #5b21b6;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.advanced-link:hover,
+.advanced-link:focus {
+  border-color: #7c3aed;
+  background: #ede9fe;
+}
+
 .deep-dive {
   min-height: calc(100vh - 44px);
 }
@@ -1024,6 +1039,12 @@ button:hover {
 
 .recommendation-disclaimer p {
   font-size: 13px;
+}
+
+.recommendation-disclaimer.advanced {
+  border-color: rgba(124, 58, 237, 0.22);
+  background: #f5f3ff;
+  color: #4c1d95;
 }
 
 .recommendation-method,
