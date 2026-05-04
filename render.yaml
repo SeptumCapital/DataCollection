@@ -37,6 +37,8 @@ services:
         value: "90"
       - key: SENQUANT_EXTERNAL_LLM_MAX_TOKENS
         value: "260"
+      - key: SENQUANT_EXTERNAL_LLM_API_STYLE
+        value: runpod
     disk:
       name: senquant-data
       mountPath: /var/data/senquant

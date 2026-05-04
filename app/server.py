@@ -1444,6 +1444,7 @@ def external_llm_base_url() -> str | None:
     raw = (
         os.environ.get("SENQUANT_EXTERNAL_LLM_BASE_URL")
         or os.environ.get("RUNPOD_OPENAI_BASE_URL")
+        or os.environ.get("RUNPOD_BASE_URL")
         or ""
     ).strip()
     return raw.rstrip("/") or None
@@ -1470,6 +1471,16 @@ def external_llm_enabled() -> bool:
     return bool(external_llm_base_url() and external_llm_api_key()) and not disabled
 
 
+def external_llm_api_style() -> str:
+    configured = os.environ.get("SENQUANT_EXTERNAL_LLM_API_STYLE", "").strip().lower()
+    if configured in {"openai", "runpod"}:
+        return configured
+    base_url = external_llm_base_url() or ""
+    if "runpod.ai/v2" in base_url and "/openai/" not in base_url:
+        return "runpod"
+    return "openai"
+
+
 def external_llm_timeout_seconds() -> float:
     return safe_float(os.environ.get("SENQUANT_EXTERNAL_LLM_TIMEOUT_SECONDS")) or 90.0
 
@@ -1484,6 +1495,7 @@ def external_llm_status() -> dict[str, object]:
         "base_url_configured": bool(external_llm_base_url()),
         "api_key_configured": bool(external_llm_api_key()),
         "model": external_llm_model_name(),
+        "api_style": external_llm_api_style(),
         "timeout_seconds": external_llm_timeout_seconds(),
     }
 
@@ -1598,23 +1610,65 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
     return content or None
 
 
-def call_external_llm_chat(question: str, local_response: dict[str, object]) -> str | None:
-    base_url = external_llm_base_url()
-    api_key = external_llm_api_key()
-    if not base_url or not api_key:
-        return None
-
-    system_prompt = (
+def external_llm_system_prompt() -> str:
+    return (
         "You are SenQuant's fallback assistant, powered by an external Qwen model. "
         "Use loaded SenQuant rows when they are provided. If the question asks for current market prices, latest news, "
         "today's macro data, or real-time facts not present in the rows, say that live internet data is not available. "
         "For general finance, investing, quantitative methods, definitions, and app navigation, answer plainly. "
         "Do not give personalized financial advice. Keep the response concise and user-friendly."
     )
+
+
+def external_llm_prompt(question: str, local_response: dict[str, object]) -> str:
+    return (
+        f"System: {external_llm_system_prompt()}\n\n"
+        "User data:\n"
+        f"{json.dumps(compact_chat_payload(question, local_response), separators=(',', ':'), default=str)}\n\n"
+        "Assistant:"
+    )
+
+
+def normalize_runpod_base_url(base_url: str) -> str:
+    for suffix in ("/runsync", "/run"):
+        if base_url.endswith(suffix):
+            return base_url[: -len(suffix)]
+    return base_url
+
+
+def extract_external_text(payload: object) -> str | None:
+    if isinstance(payload, str):
+        return payload.strip() or None
+    if isinstance(payload, list):
+        parts = [extract_external_text(item) for item in payload]
+        return "\n".join(part for part in parts if part).strip() or None
+    if not isinstance(payload, dict):
+        return None
+
+    choices = payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first = choices[0] if isinstance(choices[0], dict) else {}
+        message = first.get("message") if isinstance(first, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if content is None and isinstance(first, dict):
+            content = first.get("text")
+        return extract_external_text(content)
+
+    output = payload.get("output")
+    if output is not None:
+        return extract_external_text(output)
+
+    for key in ("text", "response", "generated_text", "content"):
+        if key in payload:
+            return extract_external_text(payload.get(key))
+    return None
+
+
+def call_external_openai_chat(question: str, local_response: dict[str, object], base_url: str, api_key: str) -> str | None:
     body = {
         "model": external_llm_model_name(),
         "messages": [
-            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": external_llm_system_prompt()},
             {
                 "role": "user",
                 "content": json.dumps(compact_chat_payload(question, local_response), separators=(",", ":"), default=str),
@@ -1630,19 +1684,50 @@ def call_external_llm_chat(question: str, local_response: dict[str, object]) -> 
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         method="POST",
     )
+    with urlopen(request, timeout=external_llm_timeout_seconds()) as response:  # noqa: S310 - operator-configured URL.
+        payload = json.loads(response.read().decode("utf-8"))
+    return extract_external_text(payload)
+
+
+def call_external_runpod_chat(question: str, local_response: dict[str, object], base_url: str, api_key: str) -> str | None:
+    body = {
+        "input": {
+            "prompt": external_llm_prompt(question, local_response),
+            "sampling_params": {
+                "max_tokens": external_llm_max_tokens(),
+                "temperature": 0.2,
+                "seed": -1,
+                "top_k": -1,
+                "top_p": 1,
+            },
+        }
+    }
+    request = Request(
+        f"{normalize_runpod_base_url(base_url)}/runsync",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    with urlopen(request, timeout=external_llm_timeout_seconds()) as response:  # noqa: S310 - operator-configured URL.
+        payload = json.loads(response.read().decode("utf-8"))
+    return extract_external_text(payload)
+
+
+def call_external_llm_chat(question: str, local_response: dict[str, object]) -> str | None:
+    base_url = external_llm_base_url()
+    api_key = external_llm_api_key()
+    if not base_url or not api_key:
+        return None
+
     try:
-        with urlopen(request, timeout=external_llm_timeout_seconds()) as response:  # noqa: S310 - operator-configured URL.
-            payload = json.loads(response.read().decode("utf-8"))
+        if external_llm_api_style() == "runpod":
+            content = call_external_runpod_chat(question, local_response, base_url, api_key)
+        else:
+            content = call_external_openai_chat(question, local_response, base_url, api_key)
     except Exception as exc:  # noqa: BLE001
         print(f"External LLM unavailable: {exc}", flush=True)
         return None
 
-    choices = payload.get("choices") if isinstance(payload, dict) else None
-    first = choices[0] if isinstance(choices, list) and choices else {}
-    message = first.get("message") if isinstance(first, dict) else None
-    content = message.get("content") if isinstance(message, dict) else None
-    if content is None and isinstance(first, dict):
-        content = first.get("text")
     content = str(content or "").strip()
     if not ollama_answer_usable(content):
         return None
