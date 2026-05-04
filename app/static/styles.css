@@ -487,6 +487,82 @@ button:hover {
   background: #fbfcfd;
 }
 
+.group-momentum-panel {
+  border-top: 1px solid var(--line);
+  background: #ffffff;
+}
+
+.group-momentum-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+.group-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+  overflow: hidden;
+}
+
+.group-card h3 {
+  margin: 0;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fafc;
+  font-size: 12px;
+}
+
+.group-list {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.group-list-block h4 {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.group-list-block ol {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.group-list-block li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: baseline;
+}
+
+.group-list-block li span {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-list-block li strong {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.group-list-block li small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 10px;
+}
+
 .market-news-window::before,
 .market-news-window::after {
   content: "";
@@ -1050,6 +1126,10 @@ canvas {
   }
 
   .market-media {
+    grid-template-columns: 1fr;
+  }
+
+  .group-momentum-grid {
     grid-template-columns: 1fr;
   }
 }

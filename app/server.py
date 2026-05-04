@@ -678,6 +678,118 @@ class DataStore:
         MOMENTUM_CACHE = {"store_loaded_at": STORE_LOADED_AT, "limit": limit, "payload": payload}
         return payload
 
+    def group_momentum_leaders(self, limit: int = 3) -> dict[str, object]:
+        global GROUP_MOMENTUM_CACHE
+        if (
+            GROUP_MOMENTUM_CACHE["store_loaded_at"] == STORE_LOADED_AT
+            and GROUP_MOMENTUM_CACHE["payload"] is not None
+        ):
+            payload = GROUP_MOMENTUM_CACHE["payload"]
+            return {
+                **payload,
+                "periods": {
+                    period: {
+                        "sectors": values["sectors"][:limit],
+                        "industries": values["industries"][:limit],
+                    }
+                    for period, values in payload["periods"].items()
+                },
+            }
+
+        periods = {
+            "1W": 5,
+            "1M": 21,
+            "3M": 63,
+            "1Y": 252,
+        }
+        stock_rows: list[dict[str, object]] = []
+        universe_meta = {
+            safe_symbol(row.get("symbol", "")): row
+            for row in self.universe.to_dict("records")
+            if row.get("symbol")
+        }
+
+        for path in sorted(TECHNICALS_DIR.glob("*.csv")):
+            try:
+                frame = pd.read_csv(path, usecols=lambda column: column in {"date", "adj_close", "close"})
+                frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+                frame = frame.dropna(subset=["date"]).sort_values("date")
+                close_col = "adj_close" if "adj_close" in frame.columns else "close"
+                close = pd.to_numeric(frame[close_col], errors="coerce")
+                valid = frame.assign(_close=close).dropna(subset=["_close"])
+                if len(valid) <= max(periods.values()):
+                    continue
+                latest_close = safe_float(valid.iloc[-1]["_close"])
+                if latest_close is None:
+                    continue
+                key = path.stem.upper()
+                meta = universe_meta.get(key, {})
+                row = {
+                    "symbol": meta.get("symbol") or key,
+                    "sector": meta.get("sector", ""),
+                    "industry": meta.get("industry", ""),
+                    "last_date": valid.iloc[-1]["date"].date().isoformat(),
+                }
+                for label, days in periods.items():
+                    start_value = safe_float(valid.iloc[-days - 1]["_close"])
+                    value = pct_change(start_value, latest_close)
+                    row[label] = value if value is not None and -0.95 <= value <= 5 else None
+                stock_rows.append(row)
+            except Exception:
+                continue
+
+        def leaders(group_key: str, period: str) -> list[dict[str, object]]:
+            frame = pd.DataFrame(stock_rows)
+            if frame.empty or group_key not in frame.columns:
+                return []
+            frame = frame.dropna(subset=[period])
+            if frame.empty:
+                return []
+            grouped = (
+                frame.groupby(group_key, dropna=True)
+                .agg(
+                    momentum=(period, "median"),
+                    stock_count=(period, "count"),
+                    leaders=("symbol", lambda values: ", ".join(list(values)[:3])),
+                )
+                .reset_index()
+            )
+            grouped = grouped[grouped[group_key].astype(str).str.len() > 0]
+            grouped = grouped[grouped["stock_count"] >= 3]
+            grouped = grouped.sort_values("momentum", ascending=False).head(10)
+            return [
+                {
+                    "name": row[group_key],
+                    "momentum": jsonable(row["momentum"]),
+                    "stock_count": int(row["stock_count"]),
+                    "sample_symbols": row["leaders"],
+                }
+                for row in grouped.to_dict("records")
+            ]
+
+        payload = {
+            "model": "median constituent return by group",
+            "as_of": max((row["last_date"] for row in stock_rows), default=None),
+            "periods": {
+                period: {
+                    "sectors": leaders("sector", period),
+                    "industries": leaders("industry", period),
+                }
+                for period in periods
+            },
+        }
+        GROUP_MOMENTUM_CACHE = {"store_loaded_at": STORE_LOADED_AT, "payload": payload}
+        return {
+            **payload,
+            "periods": {
+                period: {
+                    "sectors": values["sectors"][:limit],
+                    "industries": values["industries"][:limit],
+                }
+                for period, values in payload["periods"].items()
+            },
+        }
+
     def enrichment(self, symbol: str) -> dict[str, object]:
         key = safe_symbol(symbol)
         path = ENRICHMENT_DIR / f"{key}.json"
@@ -801,6 +913,7 @@ STORE = DataStore.load()
 STORE_LOADED_AT = time.time()
 STORE_RELOAD_CHECKED_AT = 0.0
 MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "limit": 0, "payload": None}
+GROUP_MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
 
 
 def current_store() -> DataStore:
@@ -905,6 +1018,9 @@ class AppHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/momentum":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["10"])[0]) or 10
                 self.send_json(store.momentum_recommendations(limit=limit))
+            elif parsed.path == "/api/group-momentum":
+                limit = safe_int(parse_qs(parsed.query).get("limit", ["3"])[0]) or 3
+                self.send_json(store.group_momentum_leaders(limit=limit))
             elif parsed.path.startswith("/api/stock/") and parsed.path.endswith("/fundamentals"):
                 symbol = unquote(parsed.path.split("/")[3])
                 self.send_json(store.fundamentals(symbol, parse_qs(parsed.query)))

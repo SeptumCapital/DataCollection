@@ -177,6 +177,54 @@ async function loadMomentumRecommendations() {
   }
 }
 
+async function loadGroupMomentum() {
+  const grid = $("groupMomentumGrid");
+  if (!grid) return;
+  grid.innerHTML = '<div class="market-news-empty">Loading sector and industry momentum...</div>';
+  try {
+    const payload = await fetchJson("/api/group-momentum?limit=3");
+    $("groupMomentumSummary").textContent = payload.as_of
+      ? `${payload.model} / as of ${shortDateTime(payload.as_of)}`
+      : "Median group returns by period";
+    renderGroupMomentum(payload.periods || {});
+  } catch (error) {
+    $("groupMomentumSummary").textContent = error.message;
+    grid.innerHTML = `<div class="market-news-empty">Group momentum unavailable: ${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderGroupMomentum(periods) {
+  const grid = $("groupMomentumGrid");
+  const labels = ["1W", "1M", "3M", "1Y"];
+  grid.innerHTML = labels
+    .map((label) => {
+      const period = periods[label] || {};
+      return `<section class="group-card">
+        <h3>${label}</h3>
+        <div class="group-list">
+          ${groupMomentumList("Sector", period.sectors || [])}
+          ${groupMomentumList("Industry", period.industries || [])}
+        </div>
+      </section>`;
+    })
+    .join("");
+}
+
+function groupMomentumList(title, rows) {
+  const items = rows.length
+    ? rows
+        .map(
+          (row) => `<li>
+            <span>${escapeHtml(row.name)}</span>
+            <strong class="${signedClass(row.momentum)}">${formatNumber(row.momentum, { percent: true })}</strong>
+            <small>${formatNumber(row.stock_count, { digits: 0 })} stocks</small>
+          </li>`
+        )
+        .join("")
+    : '<li><span>No data</span><strong>-</strong><small></small></li>';
+  return `<div class="group-list-block"><h4>${title}</h4><ol>${items}</ol></div>`;
+}
+
 function renderMomentumRows(rows) {
   const body = $("momentumRows");
   if (!body) return;
@@ -895,6 +943,7 @@ async function init() {
   await loadStocks();
   loadTickerTape().catch((error) => console.error("Ticker tape failed", error));
   loadMomentumRecommendations().catch((error) => console.error("Momentum recommendations failed", error));
+  loadGroupMomentum().catch((error) => console.error("Group momentum failed", error));
   loadMarketNews().catch((error) => console.error("Market news failed", error));
 }
 
