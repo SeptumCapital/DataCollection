@@ -1682,16 +1682,36 @@ def extract_external_text(payload: object) -> str | None:
         content = message.get("content") if isinstance(message, dict) else None
         if content is None and isinstance(first, dict):
             content = first.get("text")
+        if content is None and isinstance(first, dict) and isinstance(first.get("tokens"), list):
+            return "".join(str(token) for token in first["tokens"]).strip() or None
         return extract_external_text(content)
 
     output = payload.get("output")
     if output is not None:
         return extract_external_text(output)
 
+    tokens = payload.get("tokens")
+    if isinstance(tokens, list):
+        return "".join(str(token) for token in tokens).strip() or None
+
     for key in ("text", "response", "generated_text", "content", "answer", "completion"):
         if key in payload:
             return extract_external_text(payload.get(key))
     return None
+
+
+def describe_external_payload_shape(payload: object) -> str:
+    if isinstance(payload, dict):
+        keys = ",".join(str(key) for key in list(payload.keys())[:8])
+        output = payload.get("output")
+        if isinstance(output, list) and output:
+            first = output[0]
+            if isinstance(first, dict):
+                return f"top-level keys: {keys}; output[0] keys: {','.join(str(key) for key in list(first.keys())[:8])}"
+        if isinstance(output, dict):
+            return f"top-level keys: {keys}; output keys: {','.join(str(key) for key in list(output.keys())[:8])}"
+        return f"top-level keys: {keys}"
+    return f"payload type: {type(payload).__name__}"
 
 
 def call_external_openai_chat(question: str, local_response: dict[str, object], base_url: str, api_key: str) -> str | None:
@@ -1721,11 +1741,17 @@ def call_external_openai_chat(question: str, local_response: dict[str, object], 
 
 def call_external_runpod_chat(question: str, local_response: dict[str, object], base_url: str, api_key: str) -> str | None:
     wait_ms = int(min(300_000, max(1_000, external_llm_timeout_seconds() * 1000)))
+    prompt = external_llm_prompt(question, local_response)
+    max_tokens = external_llm_max_tokens()
     body = {
         "input": {
-            "prompt": external_llm_prompt(question, local_response),
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+            "temperature": 0.2,
+            "top_k": -1,
+            "top_p": 1,
             "sampling_params": {
-                "max_tokens": external_llm_max_tokens(),
+                "max_tokens": max_tokens,
                 "temperature": 0.2,
                 "seed": -1,
                 "top_k": -1,
@@ -1741,7 +1767,10 @@ def call_external_runpod_chat(question: str, local_response: dict[str, object], 
     )
     with urlopen(request, timeout=external_llm_timeout_seconds()) as response:  # noqa: S310 - operator-configured URL.
         payload = json.loads(response.read().decode("utf-8"))
-    return extract_external_text(payload)
+    text = extract_external_text(payload)
+    if not text and not EXTERNAL_LLM_LAST_ERROR["message"]:
+        EXTERNAL_LLM_LAST_ERROR["message"] = f"RunPod returned no text output ({describe_external_payload_shape(payload)})."
+    return text
 
 
 def call_external_llm_chat(question: str, local_response: dict[str, object]) -> str | None:
