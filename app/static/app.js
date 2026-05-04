@@ -137,6 +137,7 @@ async function loadMarketNews() {
 async function loadMomentumRecommendations() {
   const rows = $("momentumRows");
   if (!rows) return;
+  rows.innerHTML = '<tr><td colspan="7">Loading momentum recommendations...</td></tr>';
   try {
     const payload = await fetchJson("/api/momentum?limit=10");
     $("momentumSummary").textContent = payload.as_of
@@ -145,7 +146,7 @@ async function loadMomentumRecommendations() {
     renderMomentumRows(payload.rows || []);
   } catch (error) {
     $("momentumSummary").textContent = error.message;
-    rows.innerHTML = `<tr><td colspan="7">${escapeHtml(error.message)}</td></tr>`;
+    rows.innerHTML = `<tr><td colspan="7">Momentum unavailable: ${escapeHtml(error.message)}</td></tr>`;
   }
 }
 
