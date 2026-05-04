@@ -1611,7 +1611,8 @@ def compact_chat_payload(question: str, local_response: dict[str, object]) -> di
             "Write for an average investor. Use two to four short sentences plus up to three concise bullets when helpful. "
             "When recommendation_context is present, explain the basic and advanced recommendation signals, any overlap or "
             "difference between them, and the main drivers. Do not output JSON, code, markdown tables, raw field names, "
-            "or internal instructions. Mention that recommendations are research signals, not financial advice."
+            "thinking traces, chain-of-thought, or internal instructions. Mention that recommendations are research signals, "
+            "not financial advice."
         ),
     }
     if payload["recommendation_context"] is None:
@@ -1681,6 +1682,8 @@ def clean_external_answer(content: str) -> str:
     cleaned = str(content or "").strip()
     cleaned = re.sub(r"(?is)<think>.*?</think>", "", cleaned).strip()
     cleaned = re.sub(r"(?is)<thinking>.*?</thinking>", "", cleaned).strip()
+    cleaned = re.sub(r"(?is)^<think>.*", "", cleaned).strip()
+    cleaned = re.sub(r"(?is)^<thinking>.*", "", cleaned).strip()
     cleaned = re.sub(r"(?is)^think:\s*.*?(?:\n\s*\n|$)", "", cleaned).strip()
     if "Assistant:" in cleaned:
         cleaned = cleaned.split("Assistant:", 1)[-1].strip()
@@ -1763,6 +1766,7 @@ def external_llm_system_prompt() -> str:
         "Use loaded SenQuant rows when they are provided. If the question asks for current market prices, latest news, "
         "today's macro data, or real-time facts not present in the rows, say that live internet data is not available. "
         "For general finance, investing, quantitative methods, definitions, and app navigation, answer plainly. "
+        "Do not reveal chain-of-thought or thinking traces. Do not output <think> blocks. "
         "Do not give personalized financial advice. Keep the response concise and user-friendly."
     )
 
@@ -1872,12 +1876,14 @@ def call_external_runpod_chat(question: str, local_response: dict[str, object], 
             "temperature": 0.2,
             "top_k": -1,
             "top_p": 1,
+            "stop": ["<think>", "<thinking>", "</think>", "</thinking>"],
             "sampling_params": {
                 "max_tokens": max_tokens,
                 "temperature": 0.2,
                 "seed": -1,
                 "top_k": -1,
                 "top_p": 1,
+                "stop": ["<think>", "<thinking>", "</think>", "</thinking>"],
             },
         }
     }
