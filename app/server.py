@@ -1577,11 +1577,18 @@ def external_answer_usable(content: str) -> bool:
 
 def clean_external_answer(content: str) -> str:
     cleaned = str(content or "").strip()
+    cleaned = re.sub(r"(?is)<think>.*?</think>", "", cleaned).strip()
+    cleaned = re.sub(r"(?is)<thinking>.*?</thinking>", "", cleaned).strip()
+    cleaned = re.sub(r"(?is)^think:\s*.*?(?:\n\s*\n|$)", "", cleaned).strip()
     if "Assistant:" in cleaned:
         cleaned = cleaned.split("Assistant:", 1)[-1].strip()
     for prefix in ("assistant:", "ASSISTANT:"):
         if cleaned.startswith(prefix):
             cleaned = cleaned[len(prefix) :].strip()
+    if "\nFinal answer:" in cleaned:
+        cleaned = cleaned.split("\nFinal answer:", 1)[-1].strip()
+    if "\nAnswer:" in cleaned:
+        cleaned = cleaned.split("\nAnswer:", 1)[-1].strip()
     return cleaned
 
 
