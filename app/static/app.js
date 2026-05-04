@@ -5,6 +5,8 @@ const state = {
   metrics: new Set(["adj_close"]),
   stocks: [],
   view: "dashboard",
+  sort: "symbol",
+  direction: "asc",
 };
 
 const metricLabels = {
@@ -28,6 +30,7 @@ const metricLabels = {
 };
 
 const colors = ["#0f766e", "#1d4ed8", "#b45309", "#7c3aed", "#be123c", "#334155"];
+const textSorts = new Set(["symbol", "name", "sector"]);
 
 const $ = (id) => document.getElementById(id);
 
@@ -84,8 +87,8 @@ function queryParams() {
   for (const field of fields) {
     if ($(field).value !== "") params.set(field, $(field).value);
   }
-  params.set("sort", $("sortSelect").value);
-  params.set("direction", $("sortSelect").value === "symbol" ? "asc" : "desc");
+  params.set("sort", state.sort);
+  params.set("direction", state.direction);
   params.set("limit", "150");
   return params.toString();
 }
@@ -111,6 +114,30 @@ async function loadStocks() {
   state.stocks = payload.rows;
   $("resultCount").textContent = `${payload.total.toLocaleString()} matching stocks`;
   renderRows(payload.rows);
+  updateSortControls();
+}
+
+function setSort(sortKey, direction = null) {
+  if (state.sort === sortKey && direction === null) {
+    state.direction = state.direction === "desc" ? "asc" : "desc";
+  } else {
+    state.sort = sortKey;
+    state.direction = direction || (textSorts.has(sortKey) ? "asc" : "desc");
+  }
+  if ($("sortSelect")) $("sortSelect").value = state.sort;
+  loadStocks();
+}
+
+function updateSortControls() {
+  document.querySelectorAll(".sort-header").forEach((button) => {
+    const active = button.dataset.sort === state.sort;
+    button.classList.toggle("active", active);
+    button.dataset.direction = active ? state.direction : "";
+    button.setAttribute(
+      "aria-sort",
+      active ? (state.direction === "asc" ? "ascending" : "descending") : "none"
+    );
+  });
 }
 
 async function loadTickerTape() {
@@ -798,7 +825,6 @@ function attachEvents() {
     "rsiMax",
     "instMin",
     "ratingMax",
-    "sortSelect",
   ];
   let timer = null;
   filterIds.forEach((id) => {
@@ -817,6 +843,12 @@ function attachEvents() {
     loadStocks();
   });
   $("refreshButton").addEventListener("click", loadStocks);
+  $("sortSelect").addEventListener("change", (event) => {
+    setSort(event.target.value, textSorts.has(event.target.value) ? "asc" : "desc");
+  });
+  document.querySelectorAll(".sort-header").forEach((button) => {
+    button.addEventListener("click", () => setSort(button.dataset.sort));
+  });
   $("insiderBuyOnly").addEventListener("change", loadStocks);
   $("fundamentalMetric").addEventListener("change", loadFundamentals);
   $("backButton").addEventListener("click", showDashboard);

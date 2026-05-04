@@ -776,6 +776,45 @@ th {
   text-transform: uppercase;
 }
 
+.sort-header {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.sort-header:hover,
+.sort-header:focus {
+  color: var(--accent-2);
+  outline: none;
+}
+
+.sort-header::after {
+  content: "↕";
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.sort-header.active {
+  color: var(--accent-2);
+}
+
+.sort-header.active::after {
+  content: "↓";
+  color: var(--accent-2);
+}
+
+.sort-header.active[data-direction="asc"]::after {
+  content: "↑";
+}
+
 tbody tr {
   cursor: pointer;
   transition: background 120ms ease, box-shadow 120ms ease;
