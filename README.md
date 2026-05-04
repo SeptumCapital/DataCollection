@@ -256,7 +256,7 @@ Install the local macOS schedule:
 scripts/install_local_daily_refresh.sh
 ```
 
-That installs a LaunchAgent that runs weekdays at 3:30 PM local time on this Mac. Logs are written to:
+That installs a LaunchAgent that runs hourly. Before 3:30 PM local time and on weekends, the script exits without doing work. After 3:30 PM, it keeps retrying hourly until that market day's refresh succeeds, then skips the remaining hourly runs for that market date. Logs are written to:
 
 ```text
 logs/daily-refresh.out.log

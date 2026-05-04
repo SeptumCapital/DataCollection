@@ -183,6 +183,7 @@ def cmd_daily_refresh(args: argparse.Namespace) -> None:
         lookback_days=args.lookback_days,
         update_universe=not args.skip_universe,
         end=parse_date(args.end) if args.end else None,
+        skip_if_completed=args.skip_if_completed,
     )
     print(
         "Daily refresh complete: "
@@ -312,6 +313,7 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--symbols", help="Comma-separated ticker subset, for testing or resuming.")
     daily.add_argument("--lookback-days", type=int, default=10, help="Refetch this many days before each symbol's latest saved date.")
     daily.add_argument("--skip-universe", action="store_true", help="Do not refresh the S&P 500 universe before prices.")
+    daily.add_argument("--skip-if-completed", action="store_true", help="Skip if today's market-day refresh already succeeded.")
     daily.add_argument("--end", help="Optional YYYY-MM-DD end date. Defaults to today.")
     daily.set_defaults(func=cmd_daily_refresh)
 

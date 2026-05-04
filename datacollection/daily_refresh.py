@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 import time
 from contextlib import contextmanager
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterator
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from tqdm import tqdm
@@ -18,10 +19,26 @@ from .yahoo_prices import fetch_yahoo_daily_prices
 
 
 REFRESH_MARKER = ".senquant_refresh_complete"
+REFRESH_MARKET_DATE_MARKER = ".senquant_refresh_market_date"
 
 
 def refresh_marker_path() -> Path:
     return data_root() / REFRESH_MARKER
+
+
+def refresh_market_date_marker_path() -> Path:
+    return data_root() / REFRESH_MARKET_DATE_MARKER
+
+
+def market_today(timezone_name: str = "America/New_York") -> date:
+    return datetime.now(ZoneInfo(timezone_name)).date()
+
+
+def completed_for_market_date(market_date: date) -> bool:
+    marker = refresh_market_date_marker_path()
+    if not marker.exists():
+        return False
+    return marker.read_text(encoding="utf-8").strip() == market_date.isoformat()
 
 
 def universe_path() -> Path:
@@ -110,14 +127,27 @@ def refresh_daily_market_data(
     lookback_days: int = 10,
     update_universe: bool = True,
     end: date | None = None,
+    skip_if_completed: bool = False,
+    market_date: date | None = None,
 ) -> dict[str, object]:
     end = end or date.today()
+    market_date = market_date or market_today()
     root = data_root()
     price_dir = ensure_dir(root / "prices" / "yahoo_daily")
     action_dir = ensure_dir(price_dir / "corporate_actions")
     errors: list[dict[str, str]] = []
 
     with refresh_lock():
+        if skip_if_completed and completed_for_market_date(market_date):
+            return {
+                "updated_price_files": 0,
+                "technical_files": 0,
+                "errors": 0,
+                "skipped": True,
+                "market_date": market_date.isoformat(),
+                "marker": str(refresh_marker_path()),
+            }
+
         if update_universe:
             try:
                 save_sp500_universe(universe_path())
@@ -153,9 +183,12 @@ def refresh_daily_market_data(
         record_errors(errors, "daily_refresh")
         marker = refresh_marker_path()
         marker.write_text(pd.Timestamp.now("UTC").isoformat(), encoding="utf-8")
+        refresh_market_date_marker_path().write_text(market_date.isoformat(), encoding="utf-8")
         return {
             "updated_price_files": updated,
             "technical_files": len(technical_files),
             "errors": len(errors),
+            "skipped": False,
+            "market_date": market_date.isoformat(),
             "marker": str(marker),
         }

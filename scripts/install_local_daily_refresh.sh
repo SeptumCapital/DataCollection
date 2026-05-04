@@ -19,14 +19,8 @@ cat > "$PLIST" <<PLIST
     <string>-lc</string>
     <string>cd "$ROOT_DIR" &amp;&amp; scripts/daily_refresh.sh</string>
   </array>
-  <key>StartCalendarInterval</key>
-  <array>
-    <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>30</integer></dict>
-    <dict><key>Weekday</key><integer>2</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>30</integer></dict>
-    <dict><key>Weekday</key><integer>3</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>30</integer></dict>
-    <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>30</integer></dict>
-    <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>15</integer><key>Minute</key><integer>30</integer></dict>
-  </array>
+  <key>StartInterval</key>
+  <integer>3600</integer>
   <key>StandardOutPath</key>
   <string>$LOG_DIR/daily-refresh.out.log</string>
   <key>StandardErrorPath</key>
@@ -45,9 +39,9 @@ cat <<MSG
 Installed local daily refresh LaunchAgent:
 $PLIST
 
-Schedule: weekdays at 3:30 PM local time.
+Schedule: hourly. The script skips until today's market-day refresh is needed
+and then skips again after one successful refresh for that market date.
 Logs:
 $LOG_DIR/daily-refresh.out.log
 $LOG_DIR/daily-refresh.err.log
 MSG
-
