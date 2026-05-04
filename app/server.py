@@ -1342,12 +1342,20 @@ def ollama_chat_status() -> dict[str, object]:
         "enabled": ollama_chat_enabled(),
         "base_url_configured": bool(ollama_base_url()),
         "model": ollama_model_name(),
-        "timeout_seconds": safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 6.0,
+        "timeout_seconds": ollama_timeout_seconds(),
     }
 
 
 def ollama_model_name() -> str:
     return os.environ.get("SENQUANT_OLLAMA_MODEL") or os.environ.get("OLLAMA_MODEL") or "llama3.2:1b"
+
+
+def ollama_timeout_seconds() -> float:
+    return safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 45.0
+
+
+def ollama_max_tokens() -> int:
+    return safe_int(os.environ.get("SENQUANT_OLLAMA_MAX_TOKENS")) or 160
 
 
 def compact_chat_payload(question: str, local_response: dict[str, object]) -> dict[str, object]:
@@ -1365,7 +1373,7 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
         return None
 
     model = ollama_model_name()
-    timeout = safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 6.0
+    timeout = ollama_timeout_seconds()
     system_prompt = (
         "You are SenQuant's local market data assistant. Answer only from the JSON data provided by the app. "
         "Do not invent prices, returns, sectors, ratings, recommendations, or dates. "
@@ -1383,7 +1391,8 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
                 "content": json.dumps(user_payload, separators=(",", ":"), default=str),
             },
         ],
-        "options": {"temperature": 0.1, "num_predict": 220},
+        "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": ollama_max_tokens()},
+        "keep_alive": os.environ.get("SENQUANT_OLLAMA_KEEP_ALIVE", "30m"),
     }
     request = Request(
         f"{base_url}/api/chat",

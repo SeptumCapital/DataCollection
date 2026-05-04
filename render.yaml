@@ -28,7 +28,11 @@ services:
       - key: SENQUANT_OLLAMA_MODEL
         value: llama3.2:1b
       - key: SENQUANT_OLLAMA_TIMEOUT_SECONDS
-        value: "6"
+        value: "45"
+      - key: SENQUANT_OLLAMA_MAX_TOKENS
+        value: "160"
+      - key: SENQUANT_OLLAMA_KEEP_ALIVE
+        value: 30m
     disk:
       name: senquant-data
       mountPath: /var/data/senquant
@@ -46,6 +50,8 @@ services:
         value: 0.0.0.0:11434
       - key: OLLAMA_MODELS
         value: /var/data/ollama/models
+      - key: OLLAMA_WARMUP_TIMEOUT_SECONDS
+        value: "180"
     disk:
       name: senquant-ollama-models
       mountPath: /var/data/ollama

@@ -21,4 +21,12 @@ if ! ollama list | awk '{print $1}' | grep -Fxq "$MODEL"; then
   ollama pull "$MODEL"
 fi
 
+(
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${OLLAMA_WARMUP_TIMEOUT_SECONDS:-180}" ollama run "$MODEL" "Reply with ready." >/tmp/ollama-warmup.log 2>&1 || true
+  else
+    ollama run "$MODEL" "Reply with ready." >/tmp/ollama-warmup.log 2>&1 || true
+  fi
+) &
+
 wait "$SERVER_PID"

@@ -10,6 +10,7 @@ const state = {
   direction: "asc",
   chatProvider: "local",
   chatModel: null,
+  chatTimeoutSeconds: 45,
 };
 
 const metricLabels = {
@@ -343,9 +344,11 @@ async function loadChatStatus() {
     const payload = await fetchJson("/api/chat/status");
     state.chatProvider = payload.enabled ? "ollama" : "local";
     state.chatModel = payload.model || null;
+    state.chatTimeoutSeconds = payload.timeout_seconds || 45;
   } catch (error) {
     state.chatProvider = "local";
     state.chatModel = null;
+    state.chatTimeoutSeconds = 45;
   }
   updateChatScope();
 }
@@ -355,7 +358,10 @@ async function submitChat(question) {
   if (!clean) return;
   $("chatInput").value = "";
   addChatMessage("user", clean);
-  const pending = addChatMessage("assistant", "Checking local data...");
+  const pendingText = state.chatProvider === "ollama"
+    ? `Checking local data and asking ${state.chatModel || "Ollama"}...`
+    : "Checking local data...";
+  const pending = addChatMessage("assistant", pendingText);
   try {
     const payload = await postJson("/api/chat", { question: clean, context: chatContext() });
     pending.innerHTML = chatResponseHtml(payload);

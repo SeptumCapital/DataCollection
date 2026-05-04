@@ -189,10 +189,12 @@ The included `render.yaml` defines a private Docker service named `senquant-olla
 ```text
 SENQUANT_OLLAMA_HOSTPORT=<private senquant-ollama host:port>
 SENQUANT_OLLAMA_MODEL=llama3.2:1b
-SENQUANT_OLLAMA_TIMEOUT_SECONDS=6
+SENQUANT_OLLAMA_TIMEOUT_SECONDS=45
+SENQUANT_OLLAMA_MAX_TOKENS=160
+SENQUANT_OLLAMA_KEEP_ALIVE=30m
 ```
 
-The Ollama service stores models under `/var/data/ollama/models` and pulls `OLLAMA_MODEL` on first boot. Start with `llama3.2:1b` for faster CPU responses. You can move to a larger model by changing both `OLLAMA_MODEL` on the private service and `SENQUANT_OLLAMA_MODEL` on the web service, then redeploying.
+The Ollama service stores models under `/var/data/ollama/models`, pulls `OLLAMA_MODEL` on first boot, and starts a warmup prompt in the background after the model is present. Start with `llama3.2:1b` for faster CPU responses. You can move to a larger model by changing both `OLLAMA_MODEL` on the private service and `SENQUANT_OLLAMA_MODEL` on the web service, then redeploying.
 
 If creating the private service manually, keep Docker context as the repository root and set Dockerfile Path to `./deploy/ollama/Dockerfile`.
 
