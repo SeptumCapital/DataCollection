@@ -358,14 +358,16 @@ async function loadSocial() {
 }
 
 function drawLineChart(canvas, rows, metrics, options = {}) {
+  const activeMetrics = metrics.filter((metric) => rows.some((row) => row[metric] !== null && row[metric] !== undefined));
   const ctx = canvas.getContext("2d");
   const width = canvas.width;
   const height = canvas.height;
-  ctx.clearRect(0, 0, width, height);
-
-  const activeMetrics = metrics.filter((metric) => rows.some((row) => row[metric] !== null && row[metric] !== undefined));
+  const tooltip = ensureChartTooltip(canvas);
   if (!rows.length || !activeMetrics.length) {
+    ctx.clearRect(0, 0, width, height);
+    tooltip.classList.remove("visible");
     options.empty?.classList.add("visible");
+    canvas._chartState = null;
     return;
   }
   options.empty?.classList.remove("visible");
@@ -396,6 +398,58 @@ function drawLineChart(canvas, rows, metrics, options = {}) {
 
   const xFor = (time) => pad.left + ((time - minX) / Math.max(1, maxX - minX)) * plotW;
   const yFor = (value) => pad.top + (1 - (value - minY) / (maxY - minY)) * plotH;
+
+  const points = rows.map((row, rowIndex) => {
+    const valuesForRow = activeMetrics
+      .map((metric, metricIndex) => {
+        const value = Number(row[metric]);
+        if (Number.isNaN(value) || !Number.isFinite(value)) return null;
+        return {
+          metric,
+          metricIndex,
+          value,
+          x: xFor(new Date(row.date).getTime()),
+          y: yFor(value),
+        };
+      })
+      .filter(Boolean);
+    return {
+      row,
+      rowIndex,
+      date: row.date,
+      x: xFor(new Date(row.date).getTime()),
+      values: valuesForRow,
+    };
+  });
+
+  const chartState = {
+    canvas,
+    ctx,
+    tooltip,
+    width,
+    height,
+    rows,
+    activeMetrics,
+    options,
+    pad,
+    plotW,
+    plotH,
+    minY,
+    maxY,
+    xFor,
+    yFor,
+    points,
+    pinned: null,
+    hover: null,
+  };
+  canvas._chartState = chartState;
+  bindChartPointerEvents(canvas);
+  renderLineChart(chartState);
+}
+
+function renderLineChart(chartState) {
+  const { canvas, ctx, width, height, rows, activeMetrics, options, pad, plotW, plotH, minY, maxY, xFor, yFor } = chartState;
+  ctx.clearRect(0, 0, width, height);
 
   ctx.strokeStyle = "#e2e8f0";
   ctx.lineWidth = 1;
@@ -452,11 +506,139 @@ function drawLineChart(canvas, rows, metrics, options = {}) {
     ctx.fillStyle = "#334155";
     ctx.fillText(metricLabels[metric] || metric, x + 15, 5);
   });
+
+  const selection = chartState.pinned || chartState.hover;
+  if (selection) drawChartSelection(chartState, selection);
+}
+
+function drawChartSelection(chartState, selection) {
+  const { ctx, width, height, pad, tooltip, options } = chartState;
+  const point = chartState.points[selection.index];
+  if (!point || !point.values.length) return;
+
+  ctx.save();
+  ctx.strokeStyle = "#0f172a";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.moveTo(point.x, pad.top);
+  ctx.lineTo(point.x, height - pad.bottom);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  point.values.forEach((entry) => {
+    ctx.fillStyle = colors[entry.metricIndex % colors.length];
+    ctx.beginPath();
+    ctx.arc(entry.x, entry.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  const displayRows = point.values
+    .map((entry) => {
+      const label = metricLabels[entry.metric] || entry.metric;
+      const value = options.valueFormatter ? options.valueFormatter(entry.value, entry.metric) : formatNumber(entry.value);
+      return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+    })
+    .join("");
+  tooltip.innerHTML = `<header>${escapeHtml(longDate(point.date))}</header>${displayRows}`;
+
+  const rect = chartCanvasRect(chartState.canvas);
+  const cssX = point.x * rect.scaleX;
+  const cssY = Math.min(...point.values.map((entry) => entry.y)) * rect.scaleY;
+  const tooltipWidth = 190;
+  const left = Math.min(Math.max(10, cssX + 12), rect.width - tooltipWidth - 10);
+  const top = Math.min(Math.max(10, cssY + 12), rect.height - 120);
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+  tooltip.classList.add("visible");
+}
+
+function ensureChartTooltip(canvas) {
+  const parent = canvas.parentElement;
+  let tooltip = parent.querySelector(":scope > .chart-tooltip");
+  if (!tooltip) {
+    tooltip = document.createElement("div");
+    tooltip.className = "chart-tooltip";
+    parent.appendChild(tooltip);
+  }
+  return tooltip;
+}
+
+function bindChartPointerEvents(canvas) {
+  if (canvas._chartPointerBound) return;
+  canvas._chartPointerBound = true;
+  canvas.addEventListener("pointermove", (event) => {
+    const stateForCanvas = canvas._chartState;
+    if (!stateForCanvas || stateForCanvas.pinned) return;
+    stateForCanvas.hover = nearestChartPoint(stateForCanvas, event);
+    renderLineChart(stateForCanvas);
+  });
+  canvas.addEventListener("pointerleave", () => {
+    const stateForCanvas = canvas._chartState;
+    if (!stateForCanvas || stateForCanvas.pinned) return;
+    stateForCanvas.hover = null;
+    stateForCanvas.tooltip.classList.remove("visible");
+    renderLineChart(stateForCanvas);
+  });
+  canvas.addEventListener("click", (event) => {
+    const stateForCanvas = canvas._chartState;
+    if (!stateForCanvas) return;
+    stateForCanvas.pinned = nearestChartPoint(stateForCanvas, event);
+    stateForCanvas.hover = null;
+    renderLineChart(stateForCanvas);
+  });
+  canvas.addEventListener("dblclick", () => {
+    const stateForCanvas = canvas._chartState;
+    if (!stateForCanvas) return;
+    stateForCanvas.pinned = null;
+    stateForCanvas.hover = null;
+    stateForCanvas.tooltip.classList.remove("visible");
+    renderLineChart(stateForCanvas);
+  });
+}
+
+function chartCanvasRect(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    width: rect.width,
+    height: rect.height,
+    scaleX: rect.width / canvas.width,
+    scaleY: rect.height / canvas.height,
+  };
+}
+
+function nearestChartPoint(chartState, event) {
+  const rect = chartState.canvas.getBoundingClientRect();
+  const scale = chartState.canvas.width / rect.width;
+  const x = (event.clientX - rect.left) * scale;
+  let best = { index: 0, distance: Infinity };
+  chartState.points.forEach((point, index) => {
+    if (!point.values.length) return;
+    const distance = Math.abs(point.x - x);
+    if (distance < best.distance) best = { index, distance };
+  });
+  return best.distance === Infinity ? null : { index: best.index };
 }
 
 function shortDate(value) {
-  const date = new Date(value);
+  const date = parseDisplayDate(value);
   return date.toLocaleDateString(undefined, { month: "short", year: "2-digit" });
+}
+
+function longDate(value) {
+  const date = parseDisplayDate(value);
+  if (Number.isNaN(date.getTime())) return value || "";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function parseDisplayDate(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return new Date(value);
 }
 
 function shortDateTime(value) {

@@ -262,6 +262,10 @@ button:hover {
   box-shadow: var(--shadow);
 }
 
+.chart-card {
+  position: relative;
+}
+
 .enrichment-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -575,6 +579,54 @@ tbody tr:focus {
 canvas {
   width: 100%;
   display: block;
+  cursor: crosshair;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 4;
+  width: 190px;
+  pointer-events: none;
+  display: none;
+  padding: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.18);
+  color: var(--text);
+}
+
+.chart-tooltip.visible {
+  display: block;
+}
+
+.chart-tooltip header {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.chart-tooltip div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chart-tooltip span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chart-tooltip strong {
+  flex: 0 0 auto;
+  font-size: 12px;
 }
 
 .empty {
