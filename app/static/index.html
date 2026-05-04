@@ -100,6 +100,13 @@
 
     <main class="workspace">
       <div id="dashboardView">
+        <section class="dashboard-hero">
+          <div>
+            <h1>SenQuant Dashboard</h1>
+            <p>Scan S&amp;P 500 stocks, open any ticker for a full deep dive, then return to this dashboard.</p>
+          </div>
+        </section>
+
         <section class="topbar">
           <div class="stat">
             <span>Constituents</span>
@@ -135,7 +142,7 @@
             <div class="panel-header compact">
               <div>
                 <h2>12M Momentum Top 10</h2>
-                <p id="momentumSummary">Cross-sectional S&amp;P 500 leaders</p>
+                <p><span id="momentumSummary">Cross-sectional S&amp;P 500 leaders</span> / select a row to inspect</p>
               </div>
             </div>
             <div class="momentum-table-wrap">
@@ -149,10 +156,11 @@
                     <th>3M</th>
                     <th>12M</th>
                     <th>vs 200D</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody id="momentumRows">
-                  <tr><td colspan="7">Loading momentum recommendations...</td></tr>
+                  <tr><td colspan="8">Loading momentum recommendations...</td></tr>
                 </tbody>
               </table>
             </div>
@@ -176,7 +184,7 @@
           <div class="panel-header">
             <div>
               <h2>Stock Screener</h2>
-              <p id="resultCount">Loading local data</p>
+              <p><span id="resultCount">Loading local data</span> / click a row or Open to view deep dive</p>
             </div>
             <label class="sort-control">
               <span>Sort</span>
@@ -214,6 +222,7 @@
                   <th>EPS Est</th>
                   <th>Rev Est</th>
                   <th>Volume</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody id="stockRows"></tbody>
@@ -226,7 +235,7 @@
 
       <section id="deepDiveView" class="deep-dive hidden">
         <div class="deep-topbar">
-          <button id="backButton" class="nav-button">Back</button>
+          <button id="backButton" class="nav-button back-button">Back to Dashboard</button>
           <div>
             <div id="deepSymbol" class="ticker">-</div>
             <h2 id="deepName">Select a stock</h2>

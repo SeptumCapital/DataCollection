@@ -163,6 +163,25 @@ button:hover {
   padding: 22px;
 }
 
+.dashboard-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+}
+
+.dashboard-hero h1 {
+  margin: 0 0 4px;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.dashboard-hero p {
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .deep-dive {
   min-height: calc(100vh - 44px);
 }
@@ -193,6 +212,14 @@ button:hover {
 .nav-button {
   min-width: 76px;
   padding: 0 14px;
+}
+
+.back-button {
+  min-width: 154px;
+  border-color: rgba(15, 118, 110, 0.3);
+  background: #ecfdf5;
+  color: #065f46;
+  font-weight: 700;
 }
 
 .snapshot-grid {
@@ -386,7 +413,7 @@ button:hover {
 }
 
 .momentum-table {
-  min-width: 760px;
+  min-width: 840px;
   font-size: 12px;
 }
 
@@ -434,6 +461,22 @@ button:hover {
 
 .momentum-industry {
   max-width: 240px;
+}
+
+.open-button {
+  min-height: 28px;
+  padding: 0 10px;
+  border-color: rgba(29, 78, 216, 0.24);
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.open-button:hover,
+.open-button:focus {
+  border-color: #1d4ed8;
+  background: #dbeafe;
 }
 
 .market-news-window {
@@ -735,11 +778,13 @@ th {
 
 tbody tr {
   cursor: pointer;
+  transition: background 120ms ease, box-shadow 120ms ease;
 }
 
 tbody tr:hover,
 tbody tr.active {
   background: #ecfdf5;
+  box-shadow: inset 3px 0 0 var(--accent-2);
 }
 
 tbody tr:focus {

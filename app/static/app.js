@@ -146,7 +146,7 @@ async function loadMomentumRecommendations() {
     renderMomentumRows(payload.rows || []);
   } catch (error) {
     $("momentumSummary").textContent = error.message;
-    rows.innerHTML = `<tr><td colspan="7">Momentum unavailable: ${escapeHtml(error.message)}</td></tr>`;
+    rows.innerHTML = `<tr><td colspan="8">Momentum unavailable: ${escapeHtml(error.message)}</td></tr>`;
   }
 }
 
@@ -154,7 +154,7 @@ function renderMomentumRows(rows) {
   const body = $("momentumRows");
   if (!body) return;
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="7">No momentum recommendations available.</td></tr>';
+    body.innerHTML = '<tr><td colspan="8">No momentum recommendations available.</td></tr>';
     return;
   }
   body.innerHTML = rows
@@ -167,6 +167,7 @@ function renderMomentumRows(rows) {
         <td class="${signedClass(row.return_3m)}">${formatNumber(row.return_3m, { percent: true })}</td>
         <td class="${signedClass(row.return_12m)}">${formatNumber(row.return_12m, { percent: true })}</td>
         <td class="${signedClass(row.distance_from_sma_200)}">${formatNumber(row.distance_from_sma_200, { percent: true })}</td>
+        <td><button class="open-button" type="button" data-symbol="${escapeHtml(row.symbol)}">Open</button></td>
       </tr>`
     )
     .join("");
@@ -245,12 +246,17 @@ function renderRows(rows) {
         <td>${formatNumber(row.eps_estimate_current_q)}</td>
         <td>${formatNumber(row.revenue_estimate_current_q)}</td>
         <td>${formatNumber(row.volume, { digits: 1 })}</td>
+        <td><button class="open-button" type="button" data-symbol="${escapeHtml(row.symbol)}">Open</button></td>
       </tr>`
     )
     .join("");
 
   body.querySelectorAll("tr").forEach((row) => {
     row.addEventListener("click", () => focusStock(row.dataset.symbol));
+    row.querySelector(".open-button")?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openDeepDive(event.currentTarget.dataset.symbol);
+    });
     row.addEventListener("dblclick", () => openDeepDive(row.dataset.symbol));
     row.addEventListener("keydown", (event) => {
       if (event.key === "Enter") openDeepDive(row.dataset.symbol);
