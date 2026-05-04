@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SenQuant Data Browser</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260503-deepdive2">
+    <script async src="//cdn.embedly.com/widgets/platform.js" charset="UTF-8"></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -127,6 +128,32 @@
           <div class="ticker-label">S&amp;P 500</div>
           <div class="ticker-window">
             <div id="tickerTrack" class="ticker-track"></div>
+          </div>
+        </section>
+
+        <section class="market-media">
+          <div class="cnbc-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>CNBC Livestream</h2>
+                <p>Official CNBC live-TV access</p>
+              </div>
+            </div>
+            <div class="embed-frame">
+              <a class="embedly-card" data-card-controls="0" data-card-recommend="0" href="https://www.cnbc.com/live-tv/">CNBC Live TV</a>
+            </div>
+          </div>
+
+          <div class="market-news-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Market News</h2>
+                <p id="marketNewsSummary">Loading latest headlines</p>
+              </div>
+            </div>
+            <div class="market-news-window">
+              <div id="marketNewsTrack" class="market-news-track"></div>
+            </div>
           </div>
         </section>
 

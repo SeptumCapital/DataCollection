@@ -34,6 +34,7 @@ PRICES_DIR = DATA_ROOT / "prices" / "yahoo_daily"
 FUNDAMENTALS_DIR = DATA_ROOT / "fundamentals" / "sec_companyfacts" / "long"
 ENRICHMENT_DIR = DATA_ROOT / "enrichment" / "yahoo_quote_summary"
 NEWS_DIR = DATA_ROOT / "news" / "yahoo"
+MARKET_NEWS_PATH = NEWS_DIR / "market.json"
 SOCIAL_DIR = DATA_ROOT / "social" / "twitter"
 
 DEFAULT_METRICS = ("adj_close", "volume", "return_21d", "rsi_14", "sma_50", "sma_200")
@@ -302,6 +303,39 @@ def fetch_or_load_news(symbol: str, max_age_seconds: int = 3600) -> dict[str, ob
             payload["stale_error"] = str(exc)
             return payload
         return {"symbol": symbol.upper(), "provider": "yfinance/yahoo", "items": [], "error": str(exc)}
+
+
+def fetch_or_load_market_news(max_age_seconds: int = 900) -> dict[str, object]:
+    if MARKET_NEWS_PATH.exists() and time.time() - MARKET_NEWS_PATH.stat().st_mtime < max_age_seconds:
+        return load_json(MARKET_NEWS_PATH)
+
+    if yf is None:
+        return {"provider": "yfinance/yahoo", "items": [], "error": "yfinance is not installed"}
+
+    seen: set[str] = set()
+    items: list[dict[str, object]] = []
+    for symbol in ("^GSPC", "^DJI", "^IXIC", "^RUT"):
+        try:
+            for item in yf.Ticker(symbol).news or []:
+                if not isinstance(item, dict):
+                    continue
+                normalized = normalize_news_item(item)
+                key = str(normalized.get("url") or normalized.get("title") or "")
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                items.append(normalized)
+        except Exception:
+            continue
+
+    items.sort(key=lambda item: str(item.get("published_at") or ""), reverse=True)
+    payload = {
+        "provider": "yfinance/yahoo",
+        "collected_at": pd.Timestamp.now("UTC").isoformat(),
+        "items": items[:30],
+    }
+    write_json(MARKET_NEWS_PATH, payload)
+    return payload
 
 
 def load_social_posts(symbol: str) -> dict[str, object]:
@@ -789,6 +823,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/stocks":
                 self.send_json(store.filter_stocks(parse_qs(parsed.query)))
+            elif parsed.path == "/api/market-news":
+                self.send_json(fetch_or_load_market_news())
             elif parsed.path.startswith("/api/stock/") and parsed.path.endswith("/fundamentals"):
                 symbol = unquote(parsed.path.split("/")[3])
                 self.send_json(store.fundamentals(symbol, parse_qs(parsed.query)))

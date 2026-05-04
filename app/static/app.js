@@ -118,6 +118,43 @@ async function loadTickerTape() {
   renderTickerTape(payload.rows || []);
 }
 
+async function loadMarketNews() {
+  const track = $("marketNewsTrack");
+  if (!track) return;
+  try {
+    const payload = await fetchJson("/api/market-news");
+    const items = payload.items || [];
+    $("marketNewsSummary").textContent = items.length
+      ? `${items.length} headlines from ${payload.provider || "market news"}`
+      : payload.error || "No market headlines returned.";
+    renderMarketNews(items);
+  } catch (error) {
+    $("marketNewsSummary").textContent = error.message;
+    track.innerHTML = `<div class="market-news-empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderMarketNews(items) {
+  const track = $("marketNewsTrack");
+  if (!track) return;
+  const cleanItems = items.filter((item) => item.title && item.url);
+  if (!cleanItems.length) {
+    track.innerHTML = '<div class="market-news-empty">No market headlines loaded.</div>';
+    return;
+  }
+  const html = cleanItems.map(marketNewsItemHtml).join("");
+  track.innerHTML = `${html}${html}`;
+  track.style.setProperty("--news-duration", `${Math.max(42, cleanItems.length * 5)}s`);
+}
+
+function marketNewsItemHtml(item) {
+  return `<a class="market-news-item" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noreferrer">
+    <strong>${escapeHtml(item.title || "Untitled")}</strong>
+    <span>${escapeHtml([item.publisher, shortDateTime(item.published_at)].filter(Boolean).join(" / "))}</span>
+    <p>${escapeHtml(item.summary || "")}</p>
+  </a>`;
+}
+
 function renderTickerTape(rows) {
   const track = $("tickerTrack");
   if (!track) return;
@@ -773,6 +810,7 @@ async function init() {
   attachTickerEvents();
   await loadSummary();
   await loadTickerTape();
+  await loadMarketNews();
   await loadStocks();
 }
 
