@@ -1370,6 +1370,16 @@ def chat_group_momentum_answer(store: DataStore, question: str) -> dict[str, obj
     return {"answer": answer, "group_rows": rows, "actions": actions}
 
 
+def chat_ranked_query(question: str) -> bool:
+    lowered = question.lower()
+    return bool(
+        re.search(
+            r"\b(insider|52|below|above|200|oversold|overbought|rating|analyst|momentum|top|best|strongest|weakest|rsi)\b",
+            lowered,
+        )
+    )
+
+
 def chat_help_answer(store: DataStore) -> dict[str, object]:
     return {
         "answer": (
@@ -1414,6 +1424,7 @@ def ollama_chat_status() -> dict[str, object]:
         "base_url_configured": bool(ollama_base_url()),
         "model": ollama_model_name(),
         "timeout_seconds": ollama_timeout_seconds(),
+        "external_fallback": external_llm_status(),
     }
 
 
@@ -1429,6 +1440,54 @@ def ollama_max_tokens() -> int:
     return safe_int(os.environ.get("SENQUANT_OLLAMA_MAX_TOKENS")) or 160
 
 
+def external_llm_base_url() -> str | None:
+    raw = (
+        os.environ.get("SENQUANT_EXTERNAL_LLM_BASE_URL")
+        or os.environ.get("RUNPOD_OPENAI_BASE_URL")
+        or ""
+    ).strip()
+    return raw.rstrip("/") or None
+
+
+def external_llm_api_key() -> str | None:
+    return (
+        os.environ.get("SENQUANT_EXTERNAL_LLM_API_KEY")
+        or os.environ.get("RUNPOD_API_KEY")
+        or ""
+    ).strip() or None
+
+
+def external_llm_model_name() -> str:
+    return (
+        os.environ.get("SENQUANT_EXTERNAL_LLM_MODEL")
+        or os.environ.get("RUNPOD_MODEL")
+        or "qwen"
+    )
+
+
+def external_llm_enabled() -> bool:
+    disabled = os.environ.get("SENQUANT_ENABLE_EXTERNAL_LLM_CHAT", "").lower() in {"0", "false", "no", "off"}
+    return bool(external_llm_base_url() and external_llm_api_key()) and not disabled
+
+
+def external_llm_timeout_seconds() -> float:
+    return safe_float(os.environ.get("SENQUANT_EXTERNAL_LLM_TIMEOUT_SECONDS")) or 90.0
+
+
+def external_llm_max_tokens() -> int:
+    return safe_int(os.environ.get("SENQUANT_EXTERNAL_LLM_MAX_TOKENS")) or 260
+
+
+def external_llm_status() -> dict[str, object]:
+    return {
+        "enabled": external_llm_enabled(),
+        "base_url_configured": bool(external_llm_base_url()),
+        "api_key_configured": bool(external_llm_api_key()),
+        "model": external_llm_model_name(),
+        "timeout_seconds": external_llm_timeout_seconds(),
+    }
+
+
 def compact_chat_payload(question: str, local_response: dict[str, object]) -> dict[str, object]:
     return {
         "question": question[:1000],
@@ -1440,6 +1499,33 @@ def compact_chat_payload(question: str, local_response: dict[str, object]) -> di
             "when rows are available. Do not output JSON, code, markdown tables, raw field names, or internal instructions."
         ),
     }
+
+
+def local_response_has_data(local_response: dict[str, object]) -> bool:
+    return bool(local_response.get("rows") or local_response.get("group_rows"))
+
+
+def answer_says_local_data_missing(answer: object) -> bool:
+    lowered = str(answer or "").lower()
+    missing_phrases = (
+        "i do not have that in the loaded senquant data",
+        "could not find",
+        "no ",
+        "not available",
+        "does not contain",
+        "try again shortly",
+    )
+    return any(phrase in lowered for phrase in missing_phrases)
+
+
+def should_try_external_llm(local_response: dict[str, object], llm_answer: str | None = None) -> bool:
+    if not external_llm_enabled():
+        return False
+    if llm_answer and answer_says_local_data_missing(llm_answer):
+        return True
+    if not local_response_has_data(local_response) and answer_says_local_data_missing(local_response.get("answer")):
+        return True
+    return False
 
 
 def ollama_answer_usable(content: str) -> bool:
@@ -1512,12 +1598,90 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
     return content or None
 
 
+def call_external_llm_chat(question: str, local_response: dict[str, object]) -> str | None:
+    base_url = external_llm_base_url()
+    api_key = external_llm_api_key()
+    if not base_url or not api_key:
+        return None
+
+    system_prompt = (
+        "You are SenQuant's fallback assistant, powered by an external Qwen model. "
+        "Use loaded SenQuant rows when they are provided. If the question asks for current market prices, latest news, "
+        "today's macro data, or real-time facts not present in the rows, say that live internet data is not available. "
+        "For general finance, investing, quantitative methods, definitions, and app navigation, answer plainly. "
+        "Do not give personalized financial advice. Keep the response concise and user-friendly."
+    )
+    body = {
+        "model": external_llm_model_name(),
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": json.dumps(compact_chat_payload(question, local_response), separators=(",", ":"), default=str),
+            },
+        ],
+        "temperature": 0.2,
+        "max_tokens": external_llm_max_tokens(),
+        "stream": False,
+    }
+    request = Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=external_llm_timeout_seconds()) as response:  # noqa: S310 - operator-configured URL.
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"External LLM unavailable: {exc}", flush=True)
+        return None
+
+    choices = payload.get("choices") if isinstance(payload, dict) else None
+    first = choices[0] if isinstance(choices, list) and choices else {}
+    message = first.get("message") if isinstance(first, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if content is None and isinstance(first, dict):
+        content = first.get("text")
+    content = str(content or "").strip()
+    if not ollama_answer_usable(content):
+        return None
+    return content or None
+
+
 def enrich_chat_response_with_ollama(question: str, local_response: dict[str, object]) -> dict[str, object]:
     if not ollama_chat_enabled():
+        if should_try_external_llm(local_response):
+            external_answer = call_external_llm_chat(question, local_response)
+            if external_answer:
+                return {
+                    **local_response,
+                    "answer": external_answer,
+                    "assistant_provider": "external",
+                    "assistant_model": external_llm_model_name(),
+                }
         return {**local_response, "assistant_provider": "local"}
 
     llm_answer = call_ollama_chat(question, local_response)
+    if should_try_external_llm(local_response, llm_answer):
+        external_answer = call_external_llm_chat(question, local_response)
+        if external_answer:
+            return {
+                **local_response,
+                "answer": external_answer,
+                "assistant_provider": "external",
+                "assistant_model": external_llm_model_name(),
+            }
     if not llm_answer:
+        if should_try_external_llm(local_response):
+            external_answer = call_external_llm_chat(question, local_response)
+            if external_answer:
+                return {
+                    **local_response,
+                    "answer": external_answer,
+                    "assistant_provider": "external",
+                    "assistant_model": external_llm_model_name(),
+                }
         return {**local_response, "assistant_provider": "local", "llm_fallback": True}
     return {**local_response, "answer": llm_answer, "assistant_provider": "ollama", "assistant_model": ollama_model_name()}
 
@@ -1549,7 +1713,13 @@ def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, obj
     if re.search(r"\b(help|what can|examples|how do)\b", lowered):
         return enrich_chat_response_with_ollama(question, chat_help_answer(store))
 
-    return enrich_chat_response_with_ollama(question, chat_ranked_answer(store, question))
+    if chat_ranked_query(question):
+        return enrich_chat_response_with_ollama(question, chat_ranked_answer(store, question))
+
+    return enrich_chat_response_with_ollama(
+        question,
+        {"answer": "I do not have that in the loaded SenQuant data.", "rows": [], "actions": []},
+    )
 
 
 RECOMMENDATION_FEATURES = [

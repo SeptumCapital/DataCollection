@@ -11,6 +11,8 @@ const state = {
   chatProvider: "local",
   chatModel: null,
   chatTimeoutSeconds: 45,
+  externalChatEnabled: false,
+  externalChatModel: null,
 };
 
 const metricLabels = {
@@ -345,10 +347,14 @@ async function loadChatStatus() {
     state.chatProvider = payload.enabled ? "ollama" : "local";
     state.chatModel = payload.model || null;
     state.chatTimeoutSeconds = payload.timeout_seconds || 45;
+    state.externalChatEnabled = Boolean(payload.external_fallback?.enabled);
+    state.externalChatModel = payload.external_fallback?.model || null;
   } catch (error) {
     state.chatProvider = "local";
     state.chatModel = null;
     state.chatTimeoutSeconds = 45;
+    state.externalChatEnabled = false;
+    state.externalChatModel = null;
   }
   updateChatScope();
 }
@@ -360,6 +366,8 @@ async function submitChat(question) {
   addChatMessage("user", clean);
   const pendingText = state.chatProvider === "ollama"
     ? `Checking local data and asking ${state.chatModel || "Ollama"}...`
+    : state.externalChatEnabled
+      ? `Checking local data and fallback model ${state.externalChatModel || "RunPod"}...`
     : "Checking local data...";
   const pending = addChatMessage("assistant", pendingText);
   try {
@@ -387,6 +395,9 @@ function chatResponseHtml(payload) {
   if (payload.assistant_provider === "ollama") {
     const model = payload.assistant_model || state.chatModel || "Ollama";
     parts.push(`<p class="chat-meta">Powered by ${escapeHtml(model)}.</p>`);
+  } else if (payload.assistant_provider === "external") {
+    const model = payload.assistant_model || state.externalChatModel || "RunPod";
+    parts.push(`<p class="chat-meta">Fallback answer powered by ${escapeHtml(model)}.</p>`);
   } else if (payload.llm_fallback) {
     parts.push('<p class="chat-meta">Using the local data assistant while Ollama is unavailable.</p>');
   }

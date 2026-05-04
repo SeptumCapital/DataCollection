@@ -33,6 +33,10 @@ services:
         value: "160"
       - key: SENQUANT_OLLAMA_KEEP_ALIVE
         value: 30m
+      - key: SENQUANT_EXTERNAL_LLM_TIMEOUT_SECONDS
+        value: "90"
+      - key: SENQUANT_EXTERNAL_LLM_MAX_TOKENS
+        value: "260"
     disk:
       name: senquant-data
       mountPath: /var/data/senquant

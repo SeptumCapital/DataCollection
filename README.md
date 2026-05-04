@@ -196,6 +196,18 @@ SENQUANT_OLLAMA_KEEP_ALIVE=30m
 
 The Ollama service stores models under `/var/data/ollama/models`, pulls `OLLAMA_MODEL` on first boot, and starts a warmup prompt in the background after the model is present. Start with `llama3.2:1b` for faster CPU responses. You can move to a larger model by changing both `OLLAMA_MODEL` on the private service and `SENQUANT_OLLAMA_MODEL` on the web service, then redeploying.
 
+Optional external fallback for a RunPod OpenAI-compatible endpoint:
+
+```text
+SENQUANT_EXTERNAL_LLM_BASE_URL=https://api.runpod.ai/v2/<endpoint-id>/openai/v1
+SENQUANT_EXTERNAL_LLM_API_KEY=<set only in Render env vars>
+SENQUANT_EXTERNAL_LLM_MODEL=<your served model name>
+SENQUANT_EXTERNAL_LLM_TIMEOUT_SECONDS=90
+SENQUANT_EXTERNAL_LLM_MAX_TOKENS=260
+```
+
+The app uses this external fallback only when the local SenQuant/Ollama path cannot answer from loaded data or Ollama is unavailable. Keep the RunPod API key out of Git and set it directly on the Render web service.
+
 If creating the private service manually, keep Docker context as the repository root and set Dockerfile Path to `./deploy/ollama/Dockerfile`.
 
 The local collected dataset is large and intentionally excluded from Git. On Render, attach or create the persistent disk from `render.yaml`, then populate `/var/data/senquant/data` with the same folder layout shown in "Output Layout". The app will boot without data for health checks, but the browser is only useful after the data folder is populated.
