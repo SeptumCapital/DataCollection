@@ -1044,6 +1044,293 @@ STORE_RELOAD_CHECKED_AT = 0.0
 MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "limit": 0, "payload": None}
 GROUP_MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
 
+CHAT_ROW_COLUMNS = [
+    "symbol",
+    "name",
+    "sector",
+    "industry",
+    "last_close",
+    "return_21d",
+    "return_1y",
+    "rsi_14",
+    "distance_from_sma_200",
+    "institutions_percent_held",
+    "analyst_rating_score",
+    "price_target_mean",
+]
+
+
+def chat_value(value: object) -> object:
+    return jsonable(value)
+
+
+def chat_rows(frame: pd.DataFrame, limit: int = 8) -> list[dict[str, object]]:
+    if frame.empty:
+        return []
+    frame = frame.copy()
+    if "distance_from_sma_200" not in frame.columns and {"last_close", "sma_200"}.issubset(frame.columns):
+        close = pd.to_numeric(frame["last_close"], errors="coerce")
+        sma = pd.to_numeric(frame["sma_200"], errors="coerce")
+        frame["distance_from_sma_200"] = (close / sma) - 1
+    columns = [column for column in CHAT_ROW_COLUMNS if column in frame.columns]
+    return [
+        {key: chat_value(value) for key, value in record.items()}
+        for record in frame[columns].head(limit).to_dict("records")
+    ]
+
+
+def chat_actions_from_rows(rows: list[dict[str, object]]) -> list[dict[str, str]]:
+    actions: list[dict[str, str]] = []
+    for row in rows[:5]:
+        symbol = str(row.get("symbol") or "")
+        if symbol:
+            actions.append({"type": "stock", "value": symbol, "label": f"Open {symbol}"})
+    return actions
+
+
+def chat_find_symbols(store: DataStore, question: str, context: dict[str, object]) -> list[str]:
+    symbol_map = {safe_symbol(str(row.get("symbol", ""))): str(row.get("symbol", "")) for row in store.stocks.to_dict("records")}
+    stopwords = {
+        "a",
+        "an",
+        "and",
+        "are",
+        "best",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "me",
+        "of",
+        "on",
+        "or",
+        "show",
+        "stock",
+        "stocks",
+        "the",
+        "to",
+        "top",
+        "what",
+        "with",
+    }
+    found: list[str] = []
+    for token in re.findall(r"\b[A-Za-z][A-Za-z.-]{0,9}\b", question):
+        if token.lower() in stopwords:
+            continue
+        if token.islower() and len(token) <= 2:
+            continue
+        symbol = symbol_map.get(safe_symbol(token))
+        if symbol and symbol not in found:
+            found.append(symbol)
+    lowered = question.lower()
+    for row in store.stocks[["symbol", "name"]].dropna().to_dict("records"):
+        name = str(row.get("name") or "").lower()
+        symbol = str(row.get("symbol") or "")
+        if len(name) >= 4 and name in lowered and symbol not in found:
+            found.append(symbol)
+    selected = str(context.get("selected") or "")
+    if not found and selected and re.search(r"\b(this|current|selected)\s+(stock|ticker|company)\b", lowered):
+        found.append(selected)
+    return found[:5]
+
+
+def chat_find_sector(store: DataStore, question: str, context: dict[str, object]) -> str | None:
+    lowered = question.lower()
+    aliases = {
+        "tech": "Information Technology",
+        "technology": "Information Technology",
+        "healthcare": "Health Care",
+        "health care": "Health Care",
+        "financial": "Financials",
+        "finance": "Financials",
+        "communication": "Communication Services",
+        "consumer discretionary": "Consumer Discretionary",
+        "consumer staples": "Consumer Staples",
+        "real estate": "Real Estate",
+    }
+    for alias, sector in aliases.items():
+        if alias in lowered and sector in store.sectors:
+            return sector
+    for sector in sorted(store.sectors, key=len, reverse=True):
+        if sector.lower() in lowered:
+            return sector
+    current = str(context.get("sector") or "")
+    if current and re.search(r"\b(this|current|selected)\s+sector\b", lowered):
+        return current
+    return None
+
+
+def chat_period(question: str) -> str:
+    lowered = question.lower()
+    if "1 week" in lowered or "one week" in lowered or "1w" in lowered or "week" in lowered:
+        return "1W"
+    if "3 month" in lowered or "three month" in lowered or "3m" in lowered or "quarter" in lowered:
+        return "3M"
+    if "1 year" in lowered or "one year" in lowered or "12 month" in lowered or "1y" in lowered or "year" in lowered:
+        return "1Y"
+    return "1M"
+
+
+def chat_stock_answer(store: DataStore, symbols: list[str]) -> dict[str, object]:
+    frame = store.stocks[store.stocks["symbol"].isin(symbols)].copy()
+    order = {symbol: index for index, symbol in enumerate(symbols)}
+    frame["_order"] = frame["symbol"].map(order)
+    frame = frame.sort_values("_order")
+    rows = chat_rows(frame, limit=len(symbols))
+    if len(rows) == 1:
+        row = rows[0]
+        answer = (
+            f"{row.get('symbol')} is {row.get('name')} in {row.get('sector')} / {row.get('industry')}. "
+            "Key fields are shown below: latest price, 21D return, 1Y return, RSI, 200D SMA distance, "
+            "institutional ownership, analyst rating, and target price."
+        )
+    else:
+        answer = "Here is a side-by-side comparison for the requested tickers."
+    return {"answer": answer, "rows": rows, "actions": chat_actions_from_rows(rows)}
+
+
+def chat_sector_answer(store: DataStore, sector: str, question: str) -> dict[str, object]:
+    detail = store.sector_detail(sector)
+    members = pd.DataFrame(detail.get("members") or [])
+    lowered = question.lower()
+    if members.empty:
+        return {"answer": f"I could not find member stocks for {sector}.", "rows": [], "actions": []}
+    sort_column = "return_21d" if "21" in lowered or "month" in lowered or "1m" in lowered else "return_1y"
+    if "rsi" in lowered:
+        sort_column = "rsi_14"
+    if sort_column in members.columns:
+        members = members.sort_values(sort_column, ascending=False, na_position="last")
+    rows = chat_rows(members, limit=10)
+    performance = detail.get("performance", {})
+    answer = (
+        f"{sector} has {detail.get('stock_count')} S&P 500 members. "
+        f"Median 1M return is {format_chat_percent(performance.get('return_1m'))}, "
+        f"median 1Y return is {format_chat_percent(performance.get('return_1y'))}, and "
+        f"{format_chat_percent(performance.get('above_sma_200_pct'))} of members are above the 200D SMA."
+    )
+    actions = [{"type": "sector", "value": sector, "label": f"Open {sector} sector"}, *chat_actions_from_rows(rows)]
+    return {"answer": answer, "rows": rows, "actions": actions}
+
+
+def format_chat_percent(value: object) -> str:
+    number = safe_float(value)
+    return "-" if number is None else f"{number * 100:.1f}%"
+
+
+def chat_ranked_answer(store: DataStore, question: str) -> dict[str, object]:
+    lowered = question.lower()
+    frame = store.stocks.copy()
+    if "distance_from_sma_200" not in frame.columns and {"last_close", "sma_200"}.issubset(frame.columns):
+        close = pd.to_numeric(frame["last_close"], errors="coerce")
+        sma = pd.to_numeric(frame["sma_200"], errors="coerce")
+        frame["distance_from_sma_200"] = (close / sma) - 1
+    answer = "Here are the matching stocks from the local data."
+
+    if "insider" in lowered and ("buy" in lowered or "purchase" in lowered):
+        frame = frame[frame["insider_buy_flag"].fillna(False).astype(bool)]
+        frame = frame.sort_values("return_21d", ascending=False, na_position="last")
+        answer = "Stocks with an insider buy flag, ranked by 21D return."
+    elif "52" in lowered and "high" in lowered:
+        frame = frame[frame["at_52w_high"].fillna(False).astype(bool)]
+        frame = frame.sort_values("return_21d", ascending=False, na_position="last")
+        answer = "Stocks currently flagged near a 52-week high."
+    elif "52" in lowered and "low" in lowered:
+        frame = frame[frame["at_52w_low"].fillna(False).astype(bool)]
+        frame = frame.sort_values("return_21d", ascending=True, na_position="last")
+        answer = "Stocks currently flagged near a 52-week low."
+    elif "below" in lowered and "200" in lowered:
+        frame = frame[frame["below_sma_200"].fillna(False).astype(bool)]
+        frame = frame.sort_values("distance_from_sma_200", ascending=True, na_position="last")
+        answer = "Stocks below their 200D SMA, with the weakest distance first."
+    elif "above" in lowered and "200" in lowered:
+        frame = frame[frame["above_sma_200"].fillna(False).astype(bool)]
+        frame = frame.sort_values("distance_from_sma_200", ascending=False, na_position="last")
+        answer = "Stocks above their 200D SMA, with the strongest distance first."
+    elif "oversold" in lowered or ("lowest" in lowered and "rsi" in lowered):
+        frame = frame.sort_values("rsi_14", ascending=True, na_position="last")
+        answer = "Lowest RSI stocks in the local data."
+    elif "overbought" in lowered or ("highest" in lowered and "rsi" in lowered):
+        frame = frame.sort_values("rsi_14", ascending=False, na_position="last")
+        answer = "Highest RSI stocks in the local data."
+    elif "rating" in lowered or "analyst" in lowered:
+        frame = frame.sort_values("analyst_rating_score", ascending=True, na_position="last")
+        answer = "Best analyst rating scores in the local data. Lower scores indicate stronger ratings."
+    elif "momentum" in lowered or "top" in lowered or "best" in lowered or "strongest" in lowered:
+        payload = store.momentum_recommendations(limit=10)
+        rows = [
+            {key: chat_value(value) for key, value in row.items()}
+            for row in payload.get("rows", [])
+        ]
+        return {
+            "answer": "Top 12-month cross-sectional momentum recommendations from the local model.",
+            "rows": rows,
+            "actions": chat_actions_from_rows(rows),
+        }
+
+    rows = chat_rows(frame, limit=10)
+    return {"answer": answer, "rows": rows, "actions": chat_actions_from_rows(rows)}
+
+
+def chat_group_momentum_answer(store: DataStore, question: str) -> dict[str, object]:
+    period = chat_period(question)
+    payload = store.group_momentum_leaders(limit=5)
+    period_payload = payload.get("periods", {}).get(period, {})
+    lowered = question.lower()
+    key = "industries" if "industry" in lowered else "sectors"
+    rows = period_payload.get(key, [])
+    answer = f"Top {key[:-1]} momentum groups for {period}, using median constituent returns."
+    actions = [
+        {"type": "sector", "value": row["name"], "label": f"Open {row['name']}"}
+        for row in rows
+        if key == "sectors"
+    ]
+    return {"answer": answer, "group_rows": rows, "actions": actions}
+
+
+def chat_help_answer(store: DataStore) -> dict[str, object]:
+    return {
+        "answer": (
+            "Ask about a ticker, compare tickers, screen for technical conditions, or inspect sector momentum. "
+            "Examples: 'compare AAPL MSFT', 'top momentum stocks', 'technology sector leaders', "
+            "'stocks above 200 SMA', 'lowest RSI stocks', or 'insider buys'."
+        ),
+        "suggestions": [
+            "Top momentum stocks",
+            "Compare AAPL MSFT",
+            "Information Technology sector leaders",
+            "Stocks above 200 SMA",
+            "Lowest RSI stocks",
+            "Stocks with insider buys",
+        ],
+        "actions": [{"type": "sector", "value": sector, "label": sector} for sector in store.sectors[:5]],
+    }
+
+
+def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, object]:
+    question = str(payload.get("question") or "").strip()
+    context = payload.get("context", {})
+    context = context if isinstance(context, dict) else {}
+    if not question:
+        return chat_help_answer(store)
+
+    lowered = question.lower()
+    symbols = chat_find_symbols(store, question, context)
+    if symbols:
+        return chat_stock_answer(store, symbols)
+
+    sector = chat_find_sector(store, question, context)
+    if sector:
+        return chat_sector_answer(store, sector, question)
+
+    if ("sector" in lowered or "industry" in lowered) and ("momentum" in lowered or "strongest" in lowered or "top" in lowered):
+        return chat_group_momentum_answer(store, question)
+
+    if re.search(r"\b(help|what can|examples|how do)\b", lowered):
+        return chat_help_answer(store)
+
+    return chat_ranked_answer(store, question)
+
 
 def current_store() -> DataStore:
     global STORE, STORE_LOADED_AT, STORE_RELOAD_CHECKED_AT
@@ -1173,6 +1460,21 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_json(store.stock_detail(symbol, parse_qs(parsed.query)))
             else:
                 self.send_error(HTTPStatus.NOT_FOUND)
+        except Exception as exc:  # noqa: BLE001
+            self.send_json({"error": str(exc)}, status=500)
+
+    def do_POST(self) -> None:  # noqa: N802
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path != "/api/chat":
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            length = safe_int(self.headers.get("Content-Length")) or 0
+            raw = self.rfile.read(min(length, 64_000)) if length else b"{}"
+            payload = json.loads(raw.decode("utf-8") or "{}")
+            if not isinstance(payload, dict):
+                raise ValueError("Expected a JSON object")
+            self.send_json(chat_response(current_store(), payload))
         except Exception as exc:  # noqa: BLE001
             self.send_json({"error": str(exc)}, status=500)
 

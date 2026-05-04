@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SenQuant Data Browser</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20260504-sector1">
+    <link rel="stylesheet" href="/static/styles.css?v=20260504-chat1">
   </head>
   <body>
     <aside class="sidebar">
@@ -99,6 +99,33 @@
     </aside>
 
     <main class="workspace">
+      <section class="chat-assistant" aria-label="SenQuant data assistant">
+        <div class="chat-header">
+          <div>
+            <h2>Ask SenQuant</h2>
+            <p id="chatScope">Local data assistant</p>
+          </div>
+          <button id="chatToggleButton" class="nav-button" type="button" aria-expanded="true">Hide</button>
+        </div>
+        <div id="chatBody" class="chat-body">
+          <div id="chatMessages" class="chat-messages">
+            <div class="chat-message assistant">
+              <p>Ready.</p>
+            </div>
+          </div>
+          <div id="chatSuggestions" class="chat-suggestions">
+            <button type="button" data-question="Top momentum stocks">Top momentum stocks</button>
+            <button type="button" data-question="Stocks above 200 SMA">Above 200 SMA</button>
+            <button type="button" data-question="Lowest RSI stocks">Lowest RSI</button>
+            <button type="button" data-question="Compare AAPL MSFT">Compare AAPL MSFT</button>
+          </div>
+          <form id="chatForm" class="chat-form">
+            <input id="chatInput" type="search" placeholder="Ask a question about the data">
+            <button type="submit">Ask</button>
+          </form>
+        </div>
+      </section>
+
       <div id="dashboardView">
         <section class="dashboard-hero">
           <div>
@@ -541,6 +568,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260504-sector1"></script>
+    <script src="/static/app.js?v=20260504-chat1"></script>
   </body>
 </html>

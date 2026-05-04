@@ -163,6 +163,129 @@ button:hover {
   padding: 22px;
 }
 
+.chat-assistant {
+  overflow: hidden;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.chat-header h2 {
+  font-size: 17px;
+}
+
+.chat-header p {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chat-body {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.chat-messages {
+  display: grid;
+  gap: 8px;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.chat-message {
+  max-width: min(920px, 100%);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.chat-message.user {
+  justify-self: end;
+  border-color: rgba(29, 78, 216, 0.22);
+  background: #eff6ff;
+}
+
+.chat-message.assistant {
+  justify-self: start;
+}
+
+.chat-message p {
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.chat-form input {
+  margin: 0;
+}
+
+.chat-form button,
+.chat-suggestions button,
+.chat-actions button,
+.chat-link {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chat-suggestions,
+.chat-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chat-suggestions button,
+.chat-actions button {
+  border-color: rgba(15, 118, 110, 0.22);
+  background: #f0fdfa;
+  color: #115e59;
+}
+
+.chat-table-wrap {
+  max-width: 100%;
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid #eef1f4;
+  border-radius: 8px;
+}
+
+.chat-table {
+  min-width: 760px;
+  font-size: 12px;
+}
+
+.chat-table th,
+.chat-table td {
+  padding: 8px 9px;
+}
+
+.chat-link {
+  border-color: rgba(29, 78, 216, 0.24);
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
 .dashboard-hero {
   display: flex;
   align-items: center;
@@ -1234,5 +1357,9 @@ canvas {
 
   .controls-row {
     display: grid;
+  }
+
+  .chat-form {
+    grid-template-columns: 1fr;
   }
 }

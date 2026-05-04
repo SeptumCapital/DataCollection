@@ -82,6 +82,27 @@ async function fetchJson(url) {
   return payload;
 }
 
+async function postJson(url, payload) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok || data.error) throw new Error(data.error || response.statusText);
+  return data;
+}
+
+function chatContext() {
+  return {
+    view: state.view,
+    selected: state.selected,
+    sector: state.sector,
+    sort: state.sort,
+    direction: state.direction,
+  };
+}
+
 function queryParams() {
   const params = new URLSearchParams();
   const fields = ["priceMin", "priceMax", "return21Min", "return21Max", "rsiMin", "rsiMax", "instMin", "ratingMax"];
@@ -296,6 +317,125 @@ function renderTickerTape(rows) {
   track.style.setProperty("--ticker-duration", `${Math.max(55, priced.length * 1.15)}s`);
 }
 
+function updateChatScope() {
+  const scope = $("chatScope");
+  if (!scope) return;
+  if (state.view === "deep" && state.selected) {
+    scope.textContent = `Local data assistant / ${state.selected}`;
+  } else if (state.view === "sector" && state.sector) {
+    scope.textContent = `Local data assistant / ${state.sector}`;
+  } else {
+    scope.textContent = "Local data assistant / dashboard";
+  }
+}
+
+async function submitChat(question) {
+  const clean = question.trim();
+  if (!clean) return;
+  $("chatInput").value = "";
+  addChatMessage("user", clean);
+  const pending = addChatMessage("assistant", "Checking local data...");
+  try {
+    const payload = await postJson("/api/chat", { question: clean, context: chatContext() });
+    pending.innerHTML = chatResponseHtml(payload);
+    bindChatActionButtons(pending);
+    renderChatSuggestions(payload.suggestions || []);
+  } catch (error) {
+    pending.innerHTML = `<p>${escapeHtml(error.message)}</p>`;
+  }
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+}
+
+function addChatMessage(role, text) {
+  const message = document.createElement("div");
+  message.className = `chat-message ${role}`;
+  message.innerHTML = `<p>${escapeHtml(text)}</p>`;
+  $("chatMessages").appendChild(message);
+  $("chatMessages").scrollTop = $("chatMessages").scrollHeight;
+  return message;
+}
+
+function chatResponseHtml(payload) {
+  const parts = [`<p>${escapeHtml(payload.answer || "No answer returned.")}</p>`];
+  if (payload.rows?.length) parts.push(chatRowsTableHtml(payload.rows));
+  if (payload.group_rows?.length) parts.push(chatGroupRowsHtml(payload.group_rows));
+  if (payload.actions?.length) {
+    parts.push(`<div class="chat-actions">${payload.actions
+      .map((action) => `<button type="button" data-action-type="${escapeHtml(action.type)}" data-action-value="${escapeHtml(action.value)}">${escapeHtml(action.label)}</button>`)
+      .join("")}</div>`);
+  }
+  return parts.join("");
+}
+
+function chatRowsTableHtml(rows) {
+  const columns = [
+    ["symbol", "Ticker"],
+    ["name", "Company"],
+    ["sector", "Sector"],
+    ["last_close", "Price"],
+    ["return_21d", "21D"],
+    ["return_1y", "1Y"],
+    ["rsi_14", "RSI"],
+    ["distance_from_sma_200", "vs 200D"],
+    ["analyst_rating_score", "Rating"],
+  ].filter(([key]) => rows.some((row) => row[key] !== null && row[key] !== undefined && row[key] !== ""));
+  return `<div class="chat-table-wrap"><table class="chat-table">
+    <thead><tr>${columns.map(([, label]) => `<th>${label}</th>`).join("")}</tr></thead>
+    <tbody>${rows
+      .map((row) => `<tr>${columns.map(([key]) => `<td>${chatCellHtml(key, row[key], row)}</td>`).join("")}</tr>`)
+      .join("")}</tbody>
+  </table></div>`;
+}
+
+function chatGroupRowsHtml(rows) {
+  return `<div class="chat-table-wrap"><table class="chat-table">
+    <thead><tr><th>Group</th><th>Momentum</th><th>Stocks</th><th>Sample</th></tr></thead>
+    <tbody>${rows
+      .map(
+        (row) => `<tr>
+          <td>${escapeHtml(row.name || "-")}</td>
+          <td class="${signedClass(row.momentum)}">${percent(row.momentum)}</td>
+          <td>${formatNumber(row.stock_count, { digits: 0 })}</td>
+          <td>${escapeHtml(row.sample_symbols || "-")}</td>
+        </tr>`
+      )
+      .join("")}</tbody>
+  </table></div>`;
+}
+
+function chatCellHtml(key, value, row) {
+  if (key === "symbol") {
+    return `<button class="chat-link" type="button" data-action-type="stock" data-action-value="${escapeHtml(value)}">${escapeHtml(value || "-")}</button>`;
+  }
+  if (key === "sector") return sectorLinkHtml(value);
+  if (key === "last_close" || key === "price_target_mean") return money(value);
+  if (key.includes("return") || key.includes("distance") || key.includes("percent")) {
+    return `<span class="${signedClass(value)}">${percent(value)}</span>`;
+  }
+  if (key === "rsi_14" || key === "analyst_rating_score") return formatNumber(value, { digits: 1 });
+  return escapeHtml(value || "-");
+}
+
+function renderChatSuggestions(suggestions) {
+  const defaults = suggestions.length ? suggestions : ["Top momentum stocks", "Stocks above 200 SMA", "Lowest RSI stocks", "Compare AAPL MSFT"];
+  $("chatSuggestions").innerHTML = defaults
+    .slice(0, 6)
+    .map((question) => `<button type="button" data-question="${escapeHtml(question)}">${escapeHtml(question)}</button>`)
+    .join("");
+}
+
+function bindChatActionButtons(root) {
+  root.querySelectorAll("[data-action-type]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      const type = button.dataset.actionType;
+      const value = button.dataset.actionValue;
+      if (type === "stock") openDeepDive(value);
+      if (type === "sector") openSectorDive(value);
+    });
+  });
+}
+
 function tickerItemHtml(row) {
   const daily = Number(row.return_1d);
   const direction = Number.isFinite(daily) && daily < 0 ? "down" : "up";
@@ -422,6 +562,7 @@ async function openSectorDive(sector) {
   $("deepDiveView").classList.add("hidden");
   $("sectorDiveView").classList.remove("hidden");
   document.body.classList.add("deep-mode");
+  updateChatScope();
   window.scrollTo({ top: 0, behavior: "instant" });
   await loadSectorDive(sector);
 }
@@ -541,10 +682,12 @@ async function loadSectorNews(sector) {
 
 async function openDeepDive(symbol) {
   state.view = "deep";
+  state.selected = symbol;
   $("dashboardView").classList.add("hidden");
   $("sectorDiveView").classList.add("hidden");
   $("deepDiveView").classList.remove("hidden");
   document.body.classList.add("deep-mode");
+  updateChatScope();
   window.scrollTo({ top: 0, behavior: "instant" });
   await selectStock(symbol);
 }
@@ -555,6 +698,7 @@ function showDashboard() {
   $("sectorDiveView").classList.add("hidden");
   $("dashboardView").classList.remove("hidden");
   document.body.classList.remove("deep-mode");
+  updateChatScope();
   window.scrollTo({ top: 0, behavior: "instant" });
 }
 
@@ -1006,6 +1150,24 @@ function attachSectorEvents() {
   );
 }
 
+function attachChatEvents() {
+  $("chatForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    submitChat($("chatInput").value);
+  });
+  $("chatSuggestions").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-question]");
+    if (!button) return;
+    submitChat(button.dataset.question || "");
+  });
+  $("chatToggleButton").addEventListener("click", () => {
+    const body = $("chatBody");
+    const hidden = body.classList.toggle("hidden");
+    $("chatToggleButton").textContent = hidden ? "Show" : "Hide";
+    $("chatToggleButton").setAttribute("aria-expanded", hidden ? "false" : "true");
+  });
+}
+
 function attachEvents() {
   const filterIds = [
     "searchInput",
@@ -1089,6 +1251,8 @@ async function init() {
   attachEvents();
   attachTickerEvents();
   attachSectorEvents();
+  attachChatEvents();
+  updateChatScope();
   await loadSummary();
   await loadStocks();
   loadTickerTape().catch((error) => console.error("Ticker tape failed", error));
