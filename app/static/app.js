@@ -647,6 +647,10 @@ async function loadAdvancedRecommendations() {
   $("advancedRecommendationsMeta").textContent = "Loading advanced model output...";
   $("advancedBuyRecommendationRows").innerHTML = '<tr><td colspan="12">Loading advanced buy list...</td></tr>';
   $("advancedSellRecommendationRows").innerHTML = '<tr><td colspan="12">Loading advanced sell list...</td></tr>';
+  $("alphaRecommendationsMeta").textContent = "Loading offline alpha output...";
+  $("alphaBuyRecommendationRows").innerHTML = '<tr><td colspan="11">Loading alpha buy list...</td></tr>';
+  $("alphaSellRecommendationRows").innerHTML = '<tr><td colspan="11">Loading alpha sell list...</td></tr>';
+  $("alphaPairRecommendationRows").innerHTML = '<tr><td colspan="9">Loading alpha pair trades...</td></tr>';
   try {
     const payload = await fetchJson("/api/recommendations/advanced?limit=15");
     $("advancedRecommendationsMeta").textContent = recommendationMetaText(payload);
@@ -666,6 +670,7 @@ async function loadAdvancedRecommendations() {
     $("advancedBuyRecommendationRows").innerHTML = `<tr><td colspan="12">${escapeHtml(error.message)}</td></tr>`;
     $("advancedSellRecommendationRows").innerHTML = `<tr><td colspan="12">${escapeHtml(error.message)}</td></tr>`;
   }
+  await loadAlphaRecommendations();
 }
 
 function scheduleAdvancedRecommendationPoll(payload) {
@@ -714,6 +719,91 @@ function renderAdvancedRecommendationRows(targetId, rows) {
     )
     .join("");
   bindStockOpenRows(body);
+}
+
+async function loadAlphaRecommendations() {
+  try {
+    const payload = await fetchJson("/api/recommendations/alpha?limit=5");
+    const meta = [
+      payload.universe || "S&P 500",
+      payload.as_of ? `as of ${payload.as_of}` : "latest offline close",
+      payload.generated_at ? `generated ${shortDateTime(payload.generated_at)}` : null,
+      payload.status && payload.status !== "ready" ? payload.message || payload.status : null,
+    ].filter(Boolean);
+    $("alphaRecommendationsMeta").textContent = meta.join(" / ");
+    renderAlphaRecommendationMethodology(payload);
+    renderAlphaStockRows("alphaBuyRecommendationRows", payload.buy || []);
+    renderAlphaStockRows("alphaSellRecommendationRows", payload.sell || []);
+    renderAlphaPairRows(payload.pairs || []);
+  } catch (error) {
+    $("alphaRecommendationsMeta").textContent = error.message;
+    $("alphaBuyRecommendationRows").innerHTML = `<tr><td colspan="11">${escapeHtml(error.message)}</td></tr>`;
+    $("alphaSellRecommendationRows").innerHTML = `<tr><td colspan="11">${escapeHtml(error.message)}</td></tr>`;
+    $("alphaPairRecommendationRows").innerHTML = `<tr><td colspan="9">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function renderAlphaRecommendationMethodology(payload) {
+  const methodology = payload.methodology || [];
+  const cards = [
+    ["Model", payload.model?.name || "Offline alpha ensemble"],
+    ["Target", payload.model?.target || "next 21 trading day return"],
+    ["Training Samples", formatNumber(payload.model?.training_samples, { digits: 0 })],
+    ["Pairs Evaluated", formatNumber(payload.model?.pair_count, { digits: 0 })],
+    ["How It Works", methodology.join(" ")],
+  ];
+  $("alphaRecommendationsMethodology").innerHTML = cards
+    .map(([label, value]) => `<div class="methodology-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "-")}</strong></div>`)
+    .join("");
+}
+
+function renderAlphaStockRows(targetId, rows) {
+  const body = $(targetId);
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="11">No offline alpha stock recommendations available.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows
+    .map(
+      (row) => `<tr tabindex="0" data-symbol="${escapeHtml(row.symbol)}">
+        <td>${row.rank}</td>
+        <td><strong>${escapeHtml(row.symbol)}</strong><span>${money(row.last_close)}</span></td>
+        <td class="momentum-industry"><strong>${sectorLinkHtml(row.sector)}</strong><span>${escapeHtml(row.industry || "-")}</span></td>
+        <td class="${signedClass(row.alpha_score)}">${formatNumber(row.alpha_score, { digits: 2 })}</td>
+        <td class="${signedClass(row.ml_expected_21d)}">${percent(row.ml_expected_21d)}</td>
+        <td class="${signedClass(row.multifactor_score)}">${formatNumber(row.multifactor_score, { digits: 2 })}</td>
+        <td class="${signedClass(row.residual_score)}">${formatNumber(row.residual_score, { digits: 2 })}</td>
+        <td class="${signedClass(row.filing_drift_score)}">${formatNumber(row.filing_drift_score, { digits: 2 })}</td>
+        <td><span class="confidence ${escapeHtml((row.confidence || "").toLowerCase())}">${escapeHtml(row.confidence || "-")}</span></td>
+        <td class="recommendation-reason" title="${escapeHtml(row.reason || "")}">${escapeHtml(row.reason || "-")}</td>
+        <td><button class="open-button" type="button" data-symbol="${escapeHtml(row.symbol)}">Open</button></td>
+      </tr>`
+    )
+    .join("");
+  bindStockOpenRows(body);
+}
+
+function renderAlphaPairRows(rows) {
+  const body = $("alphaPairRecommendationRows");
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="9">No offline alpha pair trades available.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows
+    .map(
+      (row) => `<tr>
+        <td>${row.rank}</td>
+        <td><strong>${escapeHtml(row.long_symbol)}</strong><span>${money(row.long_last_close)}</span></td>
+        <td><strong>${escapeHtml(row.short_symbol)}</strong><span>${money(row.short_last_close)}</span></td>
+        <td>${sectorLinkHtml(row.sector)}</td>
+        <td class="${signedClass(row.spread_z)}">${formatNumber(row.spread_z, { digits: 2 })}</td>
+        <td>${formatNumber(row.hedge_ratio, { digits: 2 })}</td>
+        <td>${percent(row.expected_mean_reversion)}</td>
+        <td><span class="confidence ${escapeHtml((row.confidence || "").toLowerCase())}">${escapeHtml(row.confidence || "-")}</span></td>
+        <td class="recommendation-reason" title="${escapeHtml(row.reason || "")}">${escapeHtml(row.reason || "-")}</td>
+      </tr>`
+    )
+    .join("");
 }
 
 function tickerItemHtml(row) {

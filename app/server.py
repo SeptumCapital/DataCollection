@@ -40,6 +40,7 @@ MARKET_NEWS_PATH = NEWS_DIR / "market.json"
 SOCIAL_DIR = DATA_ROOT / "social" / "twitter"
 RECOMMENDATIONS_PATH = DATA_ROOT / "recommendations" / "local_quant_recommendations.json"
 ADVANCED_RECOMMENDATIONS_PATH = DATA_ROOT / "recommendations" / "advanced_quant_recommendations.json"
+OFFLINE_ALPHA_RECOMMENDATIONS_PATH = DATA_ROOT / "recommendations" / "offline_alpha_recommendations.json"
 
 SECTOR_NEWS_SYMBOLS = {
     "Communication Services": "XLC",
@@ -2268,6 +2269,34 @@ def limited_recommendation_payload(payload: dict[str, object], limit: int) -> di
     }
 
 
+def alpha_recommendation_payload(limit: int = 5) -> dict[str, object]:
+    if not OFFLINE_ALPHA_RECOMMENDATIONS_PATH.exists():
+        return {
+            "status": "unavailable",
+            "message": "Offline alpha recommendations have not been generated yet. Run python -m datacollection.cli alpha-recommendations after market close.",
+            "universe": "S&P 500",
+            "disclaimer": "Offline alpha research signals from public local data. Not financial advice.",
+            "methodology": [],
+            "model": {"name": "Offline alpha ensemble", "training_samples": 0},
+            "buy": [],
+            "sell": [],
+            "pairs": [],
+        }
+    payload = load_json(OFFLINE_ALPHA_RECOMMENDATIONS_PATH)
+    if not recommendation_cache_fresh(OFFLINE_ALPHA_RECOMMENDATIONS_PATH):
+        payload = {
+            **payload,
+            "status": "stale",
+            "message": "Showing stale offline alpha recommendations. The next post-close daily refresh will rebuild them.",
+        }
+    return {
+        **payload,
+        "buy": payload.get("buy", [])[:limit],
+        "sell": payload.get("sell", [])[:limit],
+        "pairs": payload.get("pairs", [])[:limit],
+    }
+
+
 def building_recommendation_payload(kind: str) -> dict[str, object]:
     label = "advanced recommendations" if kind == "advanced" else "recommendations"
     return {
@@ -2874,6 +2903,9 @@ class AppHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/recommendations/advanced":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["15"])[0]) or 15
                 self.send_json(advanced_recommendation_payload(store, limit=limit, allow_compute=False))
+            elif parsed.path == "/api/recommendations/alpha":
+                limit = safe_int(parse_qs(parsed.query).get("limit", ["5"])[0]) or 5
+                self.send_json(alpha_recommendation_payload(limit=limit))
             elif parsed.path.startswith("/api/sector/") and parsed.path.endswith("/news"):
                 sector = unquote(parsed.path.removeprefix("/api/sector/").removesuffix("/news"))
                 self.send_json(fetch_sector_news(sector))

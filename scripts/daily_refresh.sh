@@ -24,4 +24,5 @@ if [[ "${SENQUANT_FORCE_DAILY_REFRESH:-}" != "1" ]]; then
   fi
 fi
 
+echo "Running post-close market refresh and offline alpha recommendation build..."
 "$PYTHON" -m datacollection.cli daily-refresh --skip-if-completed "$@"

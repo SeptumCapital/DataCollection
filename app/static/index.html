@@ -390,6 +390,109 @@
           <div id="advancedRecommendationsMethodology" class="methodology-grid"></div>
         </section>
 
+        <section class="recommendation-method">
+          <div class="panel-header compact">
+            <div>
+              <h2>Alpha Research</h2>
+              <p id="alphaRecommendationsMeta">Offline post-close alpha recommendations</p>
+            </div>
+          </div>
+          <div id="alphaRecommendationsMethodology" class="methodology-grid"></div>
+        </section>
+
+        <div class="recommendations-grid">
+          <section class="table-panel recommendation-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Alpha Buy List</h2>
+                <p>Top 5 offline alpha scores</p>
+              </div>
+            </div>
+            <div class="table-wrap recommendations-table-wrap">
+              <table class="recommendations-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Ticker</th>
+                    <th>Sector</th>
+                    <th>Alpha</th>
+                    <th>ML 21D</th>
+                    <th>Multi-Factor</th>
+                    <th>Residual</th>
+                    <th>Filing Drift</th>
+                    <th>Confidence</th>
+                    <th>Reason</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="alphaBuyRecommendationRows">
+                  <tr><td colspan="11">Loading alpha buy list...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="table-panel recommendation-panel">
+            <div class="panel-header compact">
+              <div>
+                <h2>Alpha Sell List</h2>
+                <p>Bottom 5 offline alpha scores</p>
+              </div>
+            </div>
+            <div class="table-wrap recommendations-table-wrap">
+              <table class="recommendations-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Ticker</th>
+                    <th>Sector</th>
+                    <th>Alpha</th>
+                    <th>ML 21D</th>
+                    <th>Multi-Factor</th>
+                    <th>Residual</th>
+                    <th>Filing Drift</th>
+                    <th>Confidence</th>
+                    <th>Reason</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="alphaSellRecommendationRows">
+                  <tr><td colspan="11">Loading alpha sell list...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <section class="table-panel recommendation-panel">
+          <div class="panel-header compact">
+            <div>
+              <h2>Alpha Pair Trades</h2>
+              <p>Top 5 same-sector long/short spreads</p>
+            </div>
+          </div>
+          <div class="table-wrap recommendations-table-wrap">
+            <table class="recommendations-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Long</th>
+                  <th>Short</th>
+                  <th>Sector</th>
+                  <th>Spread Z</th>
+                  <th>Hedge Ratio</th>
+                  <th>Expected Mean Reversion</th>
+                  <th>Confidence</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody id="alphaPairRecommendationRows">
+                <tr><td colspan="9">Loading alpha pair trades...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         <div class="recommendations-grid">
           <section class="table-panel recommendation-panel">
             <div class="panel-header compact">

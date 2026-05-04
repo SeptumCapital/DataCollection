@@ -191,6 +191,31 @@ def cmd_daily_refresh(args: argparse.Namespace) -> None:
         f"{result['technical_files']} technical files, "
         f"{result['errors']} errors"
     )
+    if not result.get("skipped") and not args.skip_alpha_recommendations:
+        cmd_alpha_recommendations(
+            argparse.Namespace(
+                symbols=args.symbols,
+                output=None,
+                count=5,
+            )
+        )
+
+
+def cmd_alpha_recommendations(args: argparse.Namespace) -> None:
+    from .alpha_models import build_offline_alpha_recommendations
+
+    payload = build_offline_alpha_recommendations(
+        symbols=parse_list(args.symbols),
+        output_path=Path(args.output) if args.output else None,
+        count=args.count,
+    )
+    print(
+        "Offline alpha recommendations complete: "
+        f"{len(payload.get('buy', []))} buys, "
+        f"{len(payload.get('sell', []))} sells, "
+        f"{len(payload.get('pairs', []))} pairs, "
+        f"status={payload.get('status')}"
+    )
 
 
 def cmd_all(args: argparse.Namespace) -> None:
@@ -314,8 +339,15 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--lookback-days", type=int, default=10, help="Refetch this many days before each symbol's latest saved date.")
     daily.add_argument("--skip-universe", action="store_true", help="Do not refresh the S&P 500 universe before prices.")
     daily.add_argument("--skip-if-completed", action="store_true", help="Skip if today's market-day refresh already succeeded.")
+    daily.add_argument("--skip-alpha-recommendations", action="store_true", help="Do not run the offline alpha recommendation job after a successful refresh.")
     daily.add_argument("--end", help="Optional YYYY-MM-DD end date. Defaults to today.")
     daily.set_defaults(func=cmd_daily_refresh)
+
+    alpha_rec = subparsers.add_parser("alpha-recommendations", help="Build offline alpha buy/sell/pair recommendations from local S&P 500 data.")
+    alpha_rec.add_argument("--symbols", help="Comma-separated ticker subset, for testing or resuming.")
+    alpha_rec.add_argument("--output", help="Optional output JSON path. Defaults to data/recommendations/offline_alpha_recommendations.json.")
+    alpha_rec.add_argument("--count", type=int, default=5, help="Number of buy, sell, and pair recommendations to write.")
+    alpha_rec.set_defaults(func=cmd_alpha_recommendations)
 
     all_cmd = subparsers.add_parser("all", help="Run universe, prices, SEC fundamentals, and local technicals.")
     all_cmd.add_argument("--symbols", help="Comma-separated ticker subset, for testing or resuming.")
