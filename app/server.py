@@ -1341,9 +1341,13 @@ def ollama_chat_status() -> dict[str, object]:
     return {
         "enabled": ollama_chat_enabled(),
         "base_url_configured": bool(ollama_base_url()),
-        "model": os.environ.get("SENQUANT_OLLAMA_MODEL") or os.environ.get("OLLAMA_MODEL") or "llama3.2:1b",
+        "model": ollama_model_name(),
         "timeout_seconds": safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 6.0,
     }
+
+
+def ollama_model_name() -> str:
+    return os.environ.get("SENQUANT_OLLAMA_MODEL") or os.environ.get("OLLAMA_MODEL") or "llama3.2:1b"
 
 
 def compact_chat_payload(question: str, local_response: dict[str, object]) -> dict[str, object]:
@@ -1360,7 +1364,7 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
     if not base_url:
         return None
 
-    model = os.environ.get("SENQUANT_OLLAMA_MODEL") or os.environ.get("OLLAMA_MODEL") or "llama3.2:1b"
+    model = ollama_model_name()
     timeout = safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 6.0
     system_prompt = (
         "You are SenQuant's local market data assistant. Answer only from the JSON data provided by the app. "
@@ -1407,7 +1411,7 @@ def enrich_chat_response_with_ollama(question: str, local_response: dict[str, ob
     llm_answer = call_ollama_chat(question, local_response)
     if not llm_answer:
         return {**local_response, "assistant_provider": "local", "llm_fallback": True}
-    return {**local_response, "answer": llm_answer, "assistant_provider": "ollama"}
+    return {**local_response, "answer": llm_answer, "assistant_provider": "ollama", "assistant_model": ollama_model_name()}
 
 
 def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, object]:

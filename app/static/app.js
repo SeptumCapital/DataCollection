@@ -9,6 +9,7 @@ const state = {
   sort: "symbol",
   direction: "asc",
   chatProvider: "local",
+  chatModel: null,
 };
 
 const metricLabels = {
@@ -341,8 +342,10 @@ async function loadChatStatus() {
   try {
     const payload = await fetchJson("/api/chat/status");
     state.chatProvider = payload.enabled ? "ollama" : "local";
+    state.chatModel = payload.model || null;
   } catch (error) {
     state.chatProvider = "local";
+    state.chatModel = null;
   }
   updateChatScope();
 }
@@ -376,7 +379,8 @@ function addChatMessage(role, text) {
 function chatResponseHtml(payload) {
   const parts = [`<p>${escapeHtml(payload.answer || "No answer returned.")}</p>`];
   if (payload.assistant_provider === "ollama") {
-    parts.push('<p class="chat-meta">Answered by the local Ollama model using SenQuant data.</p>');
+    const model = payload.assistant_model || state.chatModel || "Ollama";
+    parts.push(`<p class="chat-meta">Powered by ${escapeHtml(model)}.</p>`);
   } else if (payload.llm_fallback) {
     parts.push('<p class="chat-meta">Using the local data assistant while Ollama is unavailable.</p>');
   }
