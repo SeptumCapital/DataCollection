@@ -13,6 +13,7 @@ const state = {
   chatTimeoutSeconds: 45,
   externalChatEnabled: false,
   externalChatModel: null,
+  chatSessionId: getChatSessionId(),
 };
 
 const metricLabels = {
@@ -41,6 +42,15 @@ let recommendationsPollTimer = null;
 let advancedRecommendationsPollTimer = null;
 
 const $ = (id) => document.getElementById(id);
+
+function getChatSessionId() {
+  const key = "senquantChatSessionId";
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const generated = crypto.randomUUID ? crypto.randomUUID() : `chat-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem(key, generated);
+  return generated;
+}
 
 function formatNumber(value, options = {}) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "-";
@@ -371,7 +381,7 @@ async function submitChat(question) {
     : "Checking local data...";
   const pending = addChatMessage("assistant", pendingText);
   try {
-    const payload = await postJson("/api/chat", { question: clean, context: chatContext() });
+    const payload = await postJson("/api/chat", { question: clean, context: chatContext(), session_id: state.chatSessionId });
     pending.innerHTML = chatResponseHtml(payload);
     bindChatActionButtons(pending);
     renderChatSuggestions(payload.suggestions || []);

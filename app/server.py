@@ -1054,6 +1054,7 @@ ADVANCED_RECOMMENDATION_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "pay
 RECOMMENDATION_BUILD_LOCK = threading.Lock()
 ADVANCED_RECOMMENDATION_BUILD_LOCK = threading.Lock()
 ADVANCED_RECOMMENDATION_DELAY_STATE: dict[str, bool] = {"scheduled": False}
+CHAT_SESSION_MEMORY: dict[str, dict[str, object]] = {}
 
 CHAT_ROW_COLUMNS = [
     "rank",
@@ -1734,20 +1735,25 @@ def call_external_llm_chat(question: str, local_response: dict[str, object]) -> 
     return content or None
 
 
-def external_llm_response(question: str, local_response: dict[str, object]) -> dict[str, object] | None:
+def external_llm_response(
+    question: str,
+    local_response: dict[str, object],
+    notice: str | None = None,
+) -> dict[str, object] | None:
     external_answer = call_external_llm_chat(question, local_response)
     if not external_answer:
         return None
     model = external_llm_model_name()
+    default_notice = (
+        f"The local SenQuant/Ollama assistant did not have a good answer, "
+        f"so this response used an external call to {model}."
+    )
     return {
         **local_response,
         "answer": external_answer,
         "assistant_provider": "external",
         "assistant_model": model,
-        "assistant_notice": (
-            f"The local SenQuant/Ollama assistant did not have a good answer, "
-            f"so this response used an external call to {model}."
-        ),
+        "assistant_notice": notice or default_notice,
     }
 
 
@@ -1773,40 +1779,111 @@ def enrich_chat_response_with_ollama(question: str, local_response: dict[str, ob
     return {**local_response, "answer": llm_answer, "assistant_provider": "ollama", "assistant_model": ollama_model_name()}
 
 
-def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, object]:
-    question = str(payload.get("question") or "").strip()
-    context = payload.get("context", {})
-    context = context if isinstance(context, dict) else {}
+def chat_session_id(payload: dict[str, object]) -> str | None:
+    raw = str(payload.get("session_id") or payload.get("sessionId") or "").strip()
+    if not raw:
+        return None
+    cleaned = re.sub(r"[^A-Za-z0-9_.:-]", "", raw)
+    return cleaned[:96] or None
+
+
+def remember_chat_question(session_id: str | None, question: str, local_response: dict[str, object]) -> None:
+    if not session_id or not question:
+        return
+    CHAT_SESSION_MEMORY[session_id] = {
+        "question": question,
+        "local_response": local_response,
+        "stored_at": time.time(),
+    }
+    while len(CHAT_SESSION_MEMORY) > 200:
+        oldest = next(iter(CHAT_SESSION_MEMORY))
+        CHAT_SESSION_MEMORY.pop(oldest, None)
+
+
+def external_retry_requested(question: str) -> bool:
+    lowered = question.lower().strip()
+    return bool(
+        re.search(
+            r"\b(use|try|ask|call|route|send)\s+(the\s+)?(external|runpod|qwen|qwen3|32b)\b",
+            lowered,
+        )
+        or re.fullmatch(r"(external|use external|try external|ask qwen|use qwen|runpod)", lowered)
+    )
+
+
+def chat_local_response(store: DataStore, question: str, context: dict[str, object]) -> dict[str, object]:
     if not question:
-        return enrich_chat_response_with_ollama(question, chat_help_answer(store))
+        return chat_help_answer(store)
 
     lowered = question.lower()
     symbols = chat_find_symbols(store, question, context)
     if re.search(r"\b(buy|sell|recommend|recommendation|recommendations|short|avoid)\b", lowered) and (
         not symbols or re.search(r"\b(top|list|which|what|show)\b", lowered)
     ):
-        return enrich_chat_response_with_ollama(question, chat_recommendation_answer(store, question))
+        return chat_recommendation_answer(store, question)
 
     if symbols:
-        return enrich_chat_response_with_ollama(question, chat_stock_answer(store, symbols))
+        return chat_stock_answer(store, symbols)
 
     sector = chat_find_sector(store, question, context)
     if sector:
-        return enrich_chat_response_with_ollama(question, chat_sector_answer(store, sector, question))
+        return chat_sector_answer(store, sector, question)
 
     if ("sector" in lowered or "industry" in lowered) and ("momentum" in lowered or "strongest" in lowered or "top" in lowered):
-        return enrich_chat_response_with_ollama(question, chat_group_momentum_answer(store, question))
+        return chat_group_momentum_answer(store, question)
 
     if re.search(r"\b(help|what can|examples|how do)\b", lowered):
-        return enrich_chat_response_with_ollama(question, chat_help_answer(store))
+        return chat_help_answer(store)
 
     if chat_ranked_query(question):
-        return enrich_chat_response_with_ollama(question, chat_ranked_answer(store, question))
+        return chat_ranked_answer(store, question)
 
-    return enrich_chat_response_with_ollama(
-        question,
-        {"answer": "I do not have that in the loaded SenQuant data.", "rows": [], "actions": []},
-    )
+    return {"answer": "I do not have that in the loaded SenQuant data.", "rows": [], "actions": []}
+
+
+def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, object]:
+    question = str(payload.get("question") or "").strip()
+    context = payload.get("context", {})
+    context = context if isinstance(context, dict) else {}
+    session_id = chat_session_id(payload)
+
+    if external_retry_requested(question):
+        previous = CHAT_SESSION_MEMORY.get(session_id or "")
+        if not previous:
+            return {
+                "answer": "Ask a question first, then type 'use external' to retry that question with the external model.",
+                "rows": [],
+                "actions": [],
+                "assistant_provider": "local",
+            }
+        if not external_llm_enabled():
+            return {
+                "answer": "External fallback is not configured yet. Add the RunPod environment variables in Render first.",
+                "rows": [],
+                "actions": [],
+                "assistant_provider": "local",
+            }
+        previous_question = str(previous.get("question") or "")
+        previous_local_response = previous.get("local_response")
+        previous_local_response = previous_local_response if isinstance(previous_local_response, dict) else {}
+        model = external_llm_model_name()
+        response = external_llm_response(
+            previous_question,
+            previous_local_response,
+            notice=f"You asked to retry the previous question with the external model, so this response used {model}.",
+        )
+        if response:
+            return response
+        return {
+            **previous_local_response,
+            "answer": "I tried the external model, but it did not return a usable answer.",
+            "assistant_provider": "local",
+            "llm_fallback": True,
+        }
+
+    local_response = chat_local_response(store, question, context)
+    remember_chat_question(session_id, question, local_response)
+    return enrich_chat_response_with_ollama(question, local_response)
 
 
 RECOMMENDATION_FEATURES = [

@@ -211,6 +211,8 @@ For OpenAI-compatible RunPod vLLM endpoints, use `SENQUANT_EXTERNAL_LLM_API_STYL
 
 The app uses this external fallback only when the local SenQuant/Ollama path cannot answer from loaded data or Ollama is unavailable. Keep the RunPod API key out of Git and set it directly on the Render web service.
 
+Users can also type `use external` after an answer to retry the previous question with the configured RunPod fallback model.
+
 If creating the private service manually, keep Docker context as the repository root and set Dockerfile Path to `./deploy/ollama/Dockerfile`.
 
 The local collected dataset is large and intentionally excluded from Git. On Render, attach or create the persistent disk from `render.yaml`, then populate `/var/data/senquant/data` with the same folder layout shown in "Output Layout". The app will boot without data for health checks, but the browser is only useful after the data folder is populated.
