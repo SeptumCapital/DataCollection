@@ -1734,39 +1734,41 @@ def call_external_llm_chat(question: str, local_response: dict[str, object]) -> 
     return content or None
 
 
+def external_llm_response(question: str, local_response: dict[str, object]) -> dict[str, object] | None:
+    external_answer = call_external_llm_chat(question, local_response)
+    if not external_answer:
+        return None
+    model = external_llm_model_name()
+    return {
+        **local_response,
+        "answer": external_answer,
+        "assistant_provider": "external",
+        "assistant_model": model,
+        "assistant_notice": (
+            f"The local SenQuant/Ollama assistant did not have a good answer, "
+            f"so this response used an external call to {model}."
+        ),
+    }
+
+
 def enrich_chat_response_with_ollama(question: str, local_response: dict[str, object]) -> dict[str, object]:
     if not ollama_chat_enabled():
         if should_try_external_llm(local_response):
-            external_answer = call_external_llm_chat(question, local_response)
-            if external_answer:
-                return {
-                    **local_response,
-                    "answer": external_answer,
-                    "assistant_provider": "external",
-                    "assistant_model": external_llm_model_name(),
-                }
+            response = external_llm_response(question, local_response)
+            if response:
+                return response
         return {**local_response, "assistant_provider": "local"}
 
     llm_answer = call_ollama_chat(question, local_response)
     if should_try_external_llm(local_response, llm_answer):
-        external_answer = call_external_llm_chat(question, local_response)
-        if external_answer:
-            return {
-                **local_response,
-                "answer": external_answer,
-                "assistant_provider": "external",
-                "assistant_model": external_llm_model_name(),
-            }
+        response = external_llm_response(question, local_response)
+        if response:
+            return response
     if not llm_answer:
         if should_try_external_llm(local_response):
-            external_answer = call_external_llm_chat(question, local_response)
-            if external_answer:
-                return {
-                    **local_response,
-                    "answer": external_answer,
-                    "assistant_provider": "external",
-                    "assistant_model": external_llm_model_name(),
-                }
+            response = external_llm_response(question, local_response)
+            if response:
+                return response
         return {**local_response, "assistant_provider": "local", "llm_fallback": True}
     return {**local_response, "answer": llm_answer, "assistant_provider": "ollama", "assistant_model": ollama_model_name()}
 

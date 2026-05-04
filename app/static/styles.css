@@ -242,6 +242,16 @@ button:hover {
   font-size: 11px;
 }
 
+.chat-message .chat-notice {
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border: 1px solid #c7d2fe;
+  border-radius: 6px;
+  background: #eef2ff;
+  color: #3730a3;
+  font-size: 12px;
+}
+
 .chat-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

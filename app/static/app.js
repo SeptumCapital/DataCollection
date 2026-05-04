@@ -391,7 +391,11 @@ function addChatMessage(role, text) {
 }
 
 function chatResponseHtml(payload) {
-  const parts = [chatTextHtml(payload.answer || "No answer returned.")];
+  const parts = [];
+  if (payload.assistant_notice) {
+    parts.push(`<p class="chat-notice">${escapeHtml(payload.assistant_notice)}</p>`);
+  }
+  parts.push(chatTextHtml(payload.answer || "No answer returned."));
   if (payload.assistant_provider === "ollama") {
     const model = payload.assistant_model || state.chatModel || "Ollama";
     parts.push(`<p class="chat-meta">Powered by ${escapeHtml(model)}.</p>`);
