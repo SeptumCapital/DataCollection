@@ -602,6 +602,72 @@ class DataStore:
             ],
         }
 
+    def momentum_recommendations(self, limit: int = 10) -> dict[str, object]:
+        rows: list[dict[str, object]] = []
+        universe_meta = {
+            safe_symbol(row.get("symbol", "")): row
+            for row in self.universe.to_dict("records")
+            if row.get("symbol")
+        }
+
+        for path in sorted(TECHNICALS_DIR.glob("*.csv")):
+            try:
+                frame = pd.read_csv(path, usecols=lambda column: column in {"date", "adj_close", "close", "sma_200"})
+                frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+                frame = frame.dropna(subset=["date"]).sort_values("date")
+                if len(frame) < 252:
+                    continue
+                close_col = "adj_close" if "adj_close" in frame.columns else "close"
+                close = pd.to_numeric(frame[close_col], errors="coerce")
+                valid = frame.assign(_close=close).dropna(subset=["_close"])
+                if len(valid) < 252:
+                    continue
+                latest = valid.iloc[-1]
+                latest_close = safe_float(latest["_close"])
+                sma_200 = safe_float(latest.get("sma_200"))
+                if latest_close is None or sma_200 in (None, 0):
+                    continue
+
+                def trailing_return(days: int) -> float | None:
+                    if len(valid) <= days:
+                        return None
+                    start_value = safe_float(valid.iloc[-days - 1]["_close"])
+                    return pct_change(start_value, latest_close)
+
+                return_12m = trailing_return(252)
+                if return_12m is None or return_12m < -0.95 or return_12m > 5:
+                    continue
+                key = path.stem.upper()
+                meta = universe_meta.get(key, {})
+                rows.append(
+                    {
+                        "symbol": meta.get("symbol") or key,
+                        "name": meta.get("name", ""),
+                        "sector": meta.get("sector", ""),
+                        "industry": meta.get("industry", ""),
+                        "last_date": latest["date"].date().isoformat(),
+                        "last_close": latest_close,
+                        "return_1m": trailing_return(21),
+                        "return_3m": trailing_return(63),
+                        "return_12m": return_12m,
+                        "sma_200": sma_200,
+                        "distance_from_sma_200": pct_change(sma_200, latest_close),
+                    }
+                )
+            except Exception:
+                continue
+
+        rows.sort(key=lambda row: row["return_12m"], reverse=True)
+        ranked = []
+        for index, row in enumerate(rows[:limit], start=1):
+            ranked.append({"rank": index, **{key: jsonable(value) for key, value in row.items()}})
+        return {
+            "model": "12-month cross-sectional momentum",
+            "universe": "S&P 500",
+            "as_of": ranked[0]["last_date"] if ranked else None,
+            "rows": ranked,
+        }
+
     def enrichment(self, symbol: str) -> dict[str, object]:
         key = safe_symbol(symbol)
         path = ENRICHMENT_DIR / f"{key}.json"
@@ -825,6 +891,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 self.send_json(store.filter_stocks(parse_qs(parsed.query)))
             elif parsed.path == "/api/market-news":
                 self.send_json(fetch_or_load_market_news())
+            elif parsed.path == "/api/momentum":
+                limit = safe_int(parse_qs(parsed.query).get("limit", ["10"])[0]) or 10
+                self.send_json(store.momentum_recommendations(limit=limit))
             elif parsed.path.startswith("/api/stock/") and parsed.path.endswith("/fundamentals"):
                 symbol = unquote(parsed.path.split("/")[3])
                 self.send_json(store.fundamentals(symbol, parse_qs(parsed.query)))

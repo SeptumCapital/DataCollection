@@ -134,6 +134,50 @@ async function loadMarketNews() {
   }
 }
 
+async function loadMomentumRecommendations() {
+  const rows = $("momentumRows");
+  if (!rows) return;
+  try {
+    const payload = await fetchJson("/api/momentum?limit=10");
+    $("momentumSummary").textContent = payload.as_of
+      ? `${payload.model} / as of ${shortDateTime(payload.as_of)}`
+      : "Cross-sectional S&P 500 leaders";
+    renderMomentumRows(payload.rows || []);
+  } catch (error) {
+    $("momentumSummary").textContent = error.message;
+    rows.innerHTML = `<tr><td colspan="7">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function renderMomentumRows(rows) {
+  const body = $("momentumRows");
+  if (!body) return;
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7">No momentum recommendations available.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows
+    .map(
+      (row) => `<tr tabindex="0" data-symbol="${escapeHtml(row.symbol)}">
+        <td>${row.rank}</td>
+        <td><strong>${escapeHtml(row.symbol)}</strong><span>${money(row.last_close)}</span></td>
+        <td class="momentum-industry"><strong>${escapeHtml(row.sector || "-")}</strong><span>${escapeHtml(row.industry || "-")}</span></td>
+        <td class="${signedClass(row.return_1m)}">${formatNumber(row.return_1m, { percent: true })}</td>
+        <td class="${signedClass(row.return_3m)}">${formatNumber(row.return_3m, { percent: true })}</td>
+        <td class="${signedClass(row.return_12m)}">${formatNumber(row.return_12m, { percent: true })}</td>
+        <td class="${signedClass(row.distance_from_sma_200)}">${formatNumber(row.distance_from_sma_200, { percent: true })}</td>
+      </tr>`
+    )
+    .join("");
+
+  body.querySelectorAll("tr").forEach((row) => {
+    row.addEventListener("click", () => openDeepDive(row.dataset.symbol));
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") openDeepDive(row.dataset.symbol);
+    });
+  });
+}
+
 function renderMarketNews(items) {
   const track = $("marketNewsTrack");
   if (!track) return;
@@ -810,6 +854,7 @@ async function init() {
   attachTickerEvents();
   await loadSummary();
   await loadTickerTape();
+  await loadMomentumRecommendations();
   await loadMarketNews();
   await loadStocks();
 }

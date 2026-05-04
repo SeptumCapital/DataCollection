@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SenQuant Data Browser</title>
     <link rel="stylesheet" href="/static/styles.css?v=20260503-deepdive2">
-    <script async src="//cdn.embedly.com/widgets/platform.js" charset="UTF-8"></script>
   </head>
   <body>
     <aside class="sidebar">
@@ -132,15 +131,28 @@
         </section>
 
         <section class="market-media">
-          <div class="cnbc-panel">
+          <div class="momentum-panel">
             <div class="panel-header compact">
               <div>
-                <h2>CNBC Livestream</h2>
-                <p>Official CNBC live-TV access</p>
+                <h2>12M Momentum Top 10</h2>
+                <p id="momentumSummary">Cross-sectional S&amp;P 500 leaders</p>
               </div>
             </div>
-            <div class="embed-frame">
-              <a class="embedly-card" data-card-controls="0" data-card-recommend="0" href="https://www.cnbc.com/live-tv/">CNBC Live TV</a>
+            <div class="momentum-table-wrap">
+              <table class="momentum-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Ticker</th>
+                    <th>Sector / Industry</th>
+                    <th>1M</th>
+                    <th>3M</th>
+                    <th>12M</th>
+                    <th>vs 200D</th>
+                  </tr>
+                </thead>
+                <tbody id="momentumRows"></tbody>
+              </table>
             </div>
           </div>
 

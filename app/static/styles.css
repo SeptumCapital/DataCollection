@@ -370,7 +370,7 @@ button:hover {
   margin-bottom: 18px;
 }
 
-.cnbc-panel,
+.momentum-panel,
 .market-news-panel {
   min-width: 0;
   overflow: hidden;
@@ -380,17 +380,60 @@ button:hover {
   box-shadow: var(--shadow);
 }
 
-.embed-frame {
-  min-height: 230px;
-  padding: 12px;
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.04), rgba(15, 23, 42, 0)),
-    #ffffff;
+.momentum-table-wrap {
+  overflow: auto;
+  border-top: 1px solid var(--line);
 }
 
-.embed-frame .embedly-card {
+.momentum-table {
+  min-width: 760px;
+  font-size: 12px;
+}
+
+.momentum-table th,
+.momentum-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.momentum-table th {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.momentum-table tbody tr {
+  cursor: pointer;
+}
+
+.momentum-table tbody tr:hover,
+.momentum-table tbody tr:focus {
+  background: #f8fafc;
+}
+
+.momentum-table td:nth-child(1) {
+  width: 52px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.momentum-table td:nth-child(2) strong,
+.momentum-industry strong {
   display: block;
-  min-height: 190px;
+  font-size: 12px;
+}
+
+.momentum-table td:nth-child(2) span,
+.momentum-industry span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.momentum-industry {
+  max-width: 240px;
 }
 
 .market-news-window {
