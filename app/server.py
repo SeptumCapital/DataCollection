@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import numpy as np
 
 try:
     import yfinance as yf
@@ -36,6 +37,7 @@ ENRICHMENT_DIR = DATA_ROOT / "enrichment" / "yahoo_quote_summary"
 NEWS_DIR = DATA_ROOT / "news" / "yahoo"
 MARKET_NEWS_PATH = NEWS_DIR / "market.json"
 SOCIAL_DIR = DATA_ROOT / "social" / "twitter"
+RECOMMENDATIONS_PATH = DATA_ROOT / "recommendations" / "local_quant_recommendations.json"
 
 SECTOR_NEWS_SYMBOLS = {
     "Communication Services": "XLC",
@@ -84,6 +86,8 @@ def safe_int(value: object) -> int | None:
 
 
 def jsonable(value: object) -> object:
+    if isinstance(value, np.generic):
+        return jsonable(value.item())
     if isinstance(value, (pd.Timestamp, date)):
         return value.isoformat()
     if pd.isna(value):
@@ -1043,6 +1047,7 @@ STORE_LOADED_AT = time.time()
 STORE_RELOAD_CHECKED_AT = 0.0
 MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "limit": 0, "payload": None}
 GROUP_MOMENTUM_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
+RECOMMENDATION_CACHE: dict[str, object] = {"store_loaded_at": 0.0, "payload": None}
 
 CHAT_ROW_COLUMNS = [
     "symbol",
@@ -1332,6 +1337,310 @@ def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, obj
     return chat_ranked_answer(store, question)
 
 
+RECOMMENDATION_FEATURES = [
+    "momentum_12_1",
+    "return_6m",
+    "return_3m",
+    "return_1m",
+    "trend_50",
+    "trend_200",
+    "rsi_scaled",
+    "volatility_21d",
+]
+
+
+def numeric_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(dtype=float)
+    return pd.to_numeric(frame[column], errors="coerce")
+
+
+def finite_float(value: object) -> float | None:
+    result = safe_float(value)
+    return result if result is not None and np.isfinite(result) else None
+
+
+def standard_score(series: pd.Series) -> pd.Series:
+    values = pd.to_numeric(series, errors="coerce")
+    median = values.median()
+    spread = values.std(ddof=0)
+    if pd.isna(spread) or spread == 0:
+        return pd.Series(0.0, index=series.index)
+    return ((values - median) / spread).clip(-3, 3).fillna(0)
+
+
+def technical_feature_row(frame: pd.DataFrame, index: int) -> dict[str, float] | None:
+    close_col = "adj_close" if "adj_close" in frame.columns else "close"
+    close = numeric_series(frame, close_col)
+    if index < 252 or index >= len(frame):
+        return None
+
+    def close_at(offset: int) -> float | None:
+        position = index - offset
+        if position < 0 or position >= len(close):
+            return None
+        return finite_float(close.iloc[position])
+
+    current = close_at(0)
+    one_month_ago = close_at(21)
+    three_months_ago = close_at(63)
+    six_months_ago = close_at(126)
+    twelve_months_ago = close_at(252)
+    if current is None or one_month_ago is None or twelve_months_ago is None:
+        return None
+
+    sma_50 = finite_float(frame.iloc[index].get("sma_50"))
+    sma_200 = finite_float(frame.iloc[index].get("sma_200"))
+    rsi = finite_float(frame.iloc[index].get("rsi_14"))
+    daily_returns = close.pct_change().iloc[max(0, index - 21) : index + 1]
+    volatility = finite_float(daily_returns.std(ddof=0))
+    row = {
+        "momentum_12_1": pct_change(twelve_months_ago, one_month_ago),
+        "return_6m": pct_change(six_months_ago, current),
+        "return_3m": pct_change(three_months_ago, current),
+        "return_1m": pct_change(one_month_ago, current),
+        "trend_50": pct_change(sma_50, current),
+        "trend_200": pct_change(sma_200, current),
+        "rsi_scaled": ((rsi - 50) / 50) if rsi is not None else None,
+        "volatility_21d": volatility,
+    }
+    if any(row.get(feature) is None for feature in RECOMMENDATION_FEATURES):
+        return None
+    if any(abs(float(row[feature])) > 10 for feature in RECOMMENDATION_FEATURES):
+        return None
+    return {key: float(value) for key, value in row.items()}
+
+
+def load_recommendation_frame(path: Path) -> pd.DataFrame | None:
+    try:
+        frame = pd.read_csv(
+            path,
+            usecols=lambda column: column in {"date", "adj_close", "close", "sma_50", "sma_200", "rsi_14"},
+        )
+        frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+        frame = frame.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+        return frame if len(frame) > 280 else None
+    except Exception:
+        return None
+
+
+def train_ridge_forecaster(samples: list[dict[str, float]]) -> dict[str, object]:
+    if len(samples) < 300:
+        return {"trained": False, "sample_count": len(samples), "coefficients": {}}
+    x = np.array([[sample[feature] for feature in RECOMMENDATION_FEATURES] for sample in samples], dtype=float)
+    y = np.array([sample["target_21d"] for sample in samples], dtype=float)
+    y = np.clip(y, -0.5, 0.5)
+    x_mean = x.mean(axis=0)
+    x_std = x.std(axis=0)
+    x_std[x_std == 0] = 1
+    y_mean = float(y.mean())
+    xs = (x - x_mean) / x_std
+    alpha = 8.0
+    identity = np.eye(xs.shape[1])
+    beta = np.linalg.solve(xs.T @ xs + alpha * identity, xs.T @ (y - y_mean))
+    return {
+        "trained": True,
+        "sample_count": len(samples),
+        "x_mean": x_mean,
+        "x_std": x_std,
+        "y_mean": y_mean,
+        "beta": beta,
+        "coefficients": {feature: jsonable(float(beta[index])) for index, feature in enumerate(RECOMMENDATION_FEATURES)},
+    }
+
+
+def ridge_predict(model: dict[str, object], features: dict[str, float]) -> float | None:
+    if not model.get("trained"):
+        return None
+    x = np.array([features[feature] for feature in RECOMMENDATION_FEATURES], dtype=float)
+    x_mean = model["x_mean"]
+    x_std = model["x_std"]
+    beta = model["beta"]
+    prediction = float(((x - x_mean) / x_std) @ beta + model["y_mean"])
+    return float(np.clip(prediction, -0.5, 0.5))
+
+
+def recommendation_reason(row: dict[str, object], signal: str) -> str:
+    reasons: list[str] = []
+    ml_expected = safe_float(row.get("ml_expected_21d"))
+    momentum = safe_float(row.get("momentum_12_1"))
+    trend_200 = safe_float(row.get("distance_from_sma_200"))
+    rsi = safe_float(row.get("rsi_14"))
+    rating = safe_float(row.get("analyst_rating_score"))
+    volatility = safe_float(row.get("volatility_21d"))
+    if signal == "BUY":
+        if ml_expected is not None and ml_expected > 0:
+            reasons.append("positive ML 21D forecast")
+        if momentum is not None and momentum > 0:
+            reasons.append("positive 12-1 momentum")
+        if trend_200 is not None and trend_200 > 0:
+            reasons.append("above 200D SMA")
+        if rating is not None and rating <= 2.3:
+            reasons.append("favorable analyst score")
+        if row.get("insider_buy_flag"):
+            reasons.append("insider buy flag")
+    else:
+        if ml_expected is not None and ml_expected < 0:
+            reasons.append("negative ML 21D forecast")
+        if momentum is not None and momentum < 0:
+            reasons.append("weak 12-1 momentum")
+        if trend_200 is not None and trend_200 < 0:
+            reasons.append("below 200D SMA")
+        if rsi is not None and rsi < 35:
+            reasons.append("weak RSI")
+        if volatility is not None and volatility > 0.035:
+            reasons.append("high short-term volatility")
+    return ", ".join(reasons[:4]) or "ranked by ensemble score"
+
+
+def recommendation_payload(store: DataStore, limit: int = 15) -> dict[str, object]:
+    global RECOMMENDATION_CACHE
+    if RECOMMENDATION_CACHE["store_loaded_at"] == STORE_LOADED_AT and RECOMMENDATION_CACHE["payload"] is not None:
+        payload = RECOMMENDATION_CACHE["payload"]
+        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+
+    marker_mtime = REFRESH_MARKER_PATH.stat().st_mtime if REFRESH_MARKER_PATH.exists() else 0
+    if RECOMMENDATIONS_PATH.exists() and RECOMMENDATIONS_PATH.stat().st_mtime >= marker_mtime:
+        payload = load_json(RECOMMENDATIONS_PATH)
+        RECOMMENDATION_CACHE = {"store_loaded_at": STORE_LOADED_AT, "payload": payload}
+        return {**payload, "buy": payload["buy"][:limit], "sell": payload["sell"][:limit]}
+
+    universe_meta = {
+        safe_symbol(row.get("symbol", "")): row
+        for row in store.stocks.to_dict("records")
+        if row.get("symbol")
+    }
+    training_samples: list[dict[str, float]] = []
+    latest_rows: list[dict[str, object]] = []
+    as_of_dates: list[str] = []
+
+    for path in sorted(TECHNICALS_DIR.glob("*.csv")):
+        frame = load_recommendation_frame(path)
+        if frame is None:
+            continue
+        close_col = "adj_close" if "adj_close" in frame.columns else "close"
+        close = numeric_series(frame, close_col)
+        for index in range(252, len(frame) - 21, 21):
+            features = technical_feature_row(frame, index)
+            if not features:
+                continue
+            current = finite_float(close.iloc[index])
+            future = finite_float(close.iloc[index + 21])
+            target = pct_change(current, future)
+            if target is None or target < -0.75 or target > 1.5:
+                continue
+            training_samples.append({**features, "target_21d": float(target)})
+
+        latest_features = technical_feature_row(frame, len(frame) - 1)
+        if not latest_features:
+            continue
+        key = path.stem.upper()
+        meta = universe_meta.get(key, {})
+        current = finite_float(close.iloc[-1])
+        sma_200 = finite_float(frame.iloc[-1].get("sma_200"))
+        latest_rows.append(
+            {
+                **latest_features,
+                "symbol": meta.get("symbol") or key,
+                "name": meta.get("name", ""),
+                "sector": meta.get("sector", ""),
+                "industry": meta.get("industry", ""),
+                "last_date": frame.iloc[-1]["date"].date().isoformat(),
+                "last_close": current,
+                "rsi_14": finite_float(frame.iloc[-1].get("rsi_14")),
+                "sma_200": sma_200,
+                "distance_from_sma_200": pct_change(sma_200, current),
+                "insider_buy_flag": bool(meta.get("insider_buy_flag")),
+                "institutions_percent_held": safe_float(meta.get("institutions_percent_held")),
+                "analyst_rating_score": safe_float(meta.get("analyst_rating_score")),
+                "price_target_mean": safe_float(meta.get("price_target_mean")),
+            }
+        )
+        as_of_dates.append(frame.iloc[-1]["date"].date().isoformat())
+
+    model = train_ridge_forecaster(training_samples)
+    frame = pd.DataFrame(latest_rows)
+    if frame.empty:
+        return {"error": "No recommendation data available", "buy": [], "sell": []}
+
+    frame["ml_expected_21d"] = [ridge_predict(model, row) for row in frame[RECOMMENDATION_FEATURES].to_dict("records")]
+    frame["target_upside"] = (
+        pd.to_numeric(frame["price_target_mean"], errors="coerce") / pd.to_numeric(frame["last_close"], errors="coerce")
+    ) - 1
+    frame["analyst_factor"] = -pd.to_numeric(frame["analyst_rating_score"], errors="coerce")
+    frame["insider_factor"] = frame["insider_buy_flag"].fillna(False).astype(float)
+    frame["factor_score"] = (
+        0.22 * standard_score(frame["momentum_12_1"])
+        + 0.18 * standard_score(frame["return_6m"])
+        + 0.14 * standard_score(frame["return_3m"])
+        + 0.14 * standard_score(frame["trend_200"])
+        + 0.08 * standard_score(frame["trend_50"])
+        - 0.10 * standard_score(frame["volatility_21d"])
+        + 0.06 * standard_score(frame["target_upside"])
+        + 0.04 * standard_score(frame["analyst_factor"])
+        + 0.04 * standard_score(frame["institutions_percent_held"])
+        + 0.02 * standard_score(frame["insider_factor"])
+    )
+    ml_component = standard_score(frame["ml_expected_21d"]) if model.get("trained") else 0
+    frame["quant_score"] = 0.55 * ml_component + 0.45 * frame["factor_score"]
+    frame = frame.sort_values("quant_score", ascending=False, na_position="last")
+
+    def output_rows(selected: pd.DataFrame, signal: str) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for rank, row in enumerate(selected.to_dict("records"), start=1):
+            score = safe_float(row.get("quant_score")) or 0
+            confidence = "High" if abs(score) >= 1.25 else "Medium" if abs(score) >= 0.65 else "Low"
+            payload_row = {
+                "rank": rank,
+                "signal": signal,
+                "confidence": confidence,
+                "symbol": row.get("symbol"),
+                "name": row.get("name"),
+                "sector": row.get("sector"),
+                "industry": row.get("industry"),
+                "last_date": row.get("last_date"),
+                "last_close": row.get("last_close"),
+                "ml_expected_21d": row.get("ml_expected_21d"),
+                "quant_score": row.get("quant_score"),
+                "momentum_12_1": row.get("momentum_12_1"),
+                "return_3m": row.get("return_3m"),
+                "return_1m": row.get("return_1m"),
+                "rsi_14": row.get("rsi_14"),
+                "distance_from_sma_200": row.get("distance_from_sma_200"),
+                "analyst_rating_score": row.get("analyst_rating_score"),
+                "target_upside": row.get("target_upside"),
+                "reason": recommendation_reason(row, signal),
+            }
+            rows.append({key: jsonable(value) for key, value in payload_row.items()})
+        return rows
+
+    buy = output_rows(frame.head(25), "BUY")
+    sell = output_rows(frame.tail(25).sort_values("quant_score", ascending=True), "SELL")
+    payload = {
+        "as_of": max(as_of_dates) if as_of_dates else None,
+        "universe": "S&P 500",
+        "disclaimer": "Beta model output for research only. Not financial advice.",
+        "methodology": [
+            "Historical supervised ridge regression trained on each stock's rolling technical features to forecast next 21 trading day return.",
+            "Cross-sectional quant factor ensemble using 12-1 momentum, 6M/3M/1M returns, 50D/200D trend, volatility penalty, analyst rating, target upside, institutional ownership, and insider buy flag.",
+            "Final score blends the ML forecast with the factor ensemble; highest scores form the buy list and lowest scores form the sell list.",
+        ],
+        "model": {
+            "name": "Local ridge regression plus quant factor ensemble",
+            "target": "next 21 trading day return",
+            "training_samples": model.get("sample_count", 0),
+            "trained": bool(model.get("trained")),
+            "features": RECOMMENDATION_FEATURES,
+            "coefficients": model.get("coefficients", {}),
+        },
+        "buy": buy,
+        "sell": sell,
+    }
+    RECOMMENDATION_CACHE = {"store_loaded_at": STORE_LOADED_AT, "payload": payload}
+    write_json(RECOMMENDATIONS_PATH, payload)
+    return {**payload, "buy": buy[:limit], "sell": sell[:limit]}
+
+
 def current_store() -> DataStore:
     global STORE, STORE_LOADED_AT, STORE_RELOAD_CHECKED_AT
     now = time.time()
@@ -1437,6 +1746,9 @@ class AppHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/group-momentum":
                 limit = safe_int(parse_qs(parsed.query).get("limit", ["3"])[0]) or 3
                 self.send_json(store.group_momentum_leaders(limit=limit))
+            elif parsed.path == "/api/recommendations":
+                limit = safe_int(parse_qs(parsed.query).get("limit", ["15"])[0]) or 15
+                self.send_json(recommendation_payload(store, limit=limit))
             elif parsed.path.startswith("/api/sector/") and parsed.path.endswith("/news"):
                 sector = unquote(parsed.path.removeprefix("/api/sector/").removesuffix("/news"))
                 self.send_json(fetch_sector_news(sector))

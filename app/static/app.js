@@ -324,6 +324,8 @@ function updateChatScope() {
     scope.textContent = `Local data assistant / ${state.selected}`;
   } else if (state.view === "sector" && state.sector) {
     scope.textContent = `Local data assistant / ${state.sector}`;
+  } else if (state.view === "recommendations") {
+    scope.textContent = "Local data assistant / recommendations";
   } else {
     scope.textContent = "Local data assistant / dashboard";
   }
@@ -434,6 +436,78 @@ function bindChatActionButtons(root) {
       if (type === "sector") openSectorDive(value);
     });
   });
+}
+
+async function openRecommendations() {
+  state.view = "recommendations";
+  $("dashboardView").classList.add("hidden");
+  $("sectorDiveView").classList.add("hidden");
+  $("deepDiveView").classList.add("hidden");
+  $("recommendationsView").classList.remove("hidden");
+  document.body.classList.add("deep-mode");
+  updateChatScope();
+  window.scrollTo({ top: 0, behavior: "instant" });
+  await loadRecommendations();
+}
+
+async function loadRecommendations() {
+  $("recommendationsMeta").textContent = "Loading latest local model output...";
+  $("buyRecommendationRows").innerHTML = '<tr><td colspan="11">Loading buy list...</td></tr>';
+  $("sellRecommendationRows").innerHTML = '<tr><td colspan="11">Loading sell list...</td></tr>';
+  try {
+    const payload = await fetchJson("/api/recommendations?limit=15");
+    $("recommendationsMeta").textContent = `${payload.universe || "S&P 500"} / as of ${payload.as_of || "latest close"} / ${formatNumber(payload.model?.training_samples, { digits: 0 })} training samples`;
+    $("recommendationsDisclaimer").textContent = payload.disclaimer || "Beta model output for research only. Not financial advice.";
+    $("recommendationsModelName").textContent = payload.model?.name || "Local quant model";
+    renderRecommendationMethodology(payload);
+    renderRecommendationRows("buyRecommendationRows", payload.buy || []);
+    renderRecommendationRows("sellRecommendationRows", payload.sell || []);
+  } catch (error) {
+    $("recommendationsMeta").textContent = error.message;
+    $("buyRecommendationRows").innerHTML = `<tr><td colspan="11">${escapeHtml(error.message)}</td></tr>`;
+    $("sellRecommendationRows").innerHTML = `<tr><td colspan="11">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function renderRecommendationMethodology(payload) {
+  const methodology = payload.methodology || [];
+  const features = payload.model?.features || [];
+  const cards = [
+    ["Model", payload.model?.name || "Local quant model"],
+    ["Target", payload.model?.target || "next 21 trading day return"],
+    ["Training Samples", formatNumber(payload.model?.training_samples, { digits: 0 })],
+    ["Feature Set", features.join(", ")],
+    ["How It Works", methodology.join(" ")],
+  ];
+  $("recommendationsMethodology").innerHTML = cards
+    .map(([label, value]) => `<div class="methodology-card"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || "-")}</strong></div>`)
+    .join("");
+}
+
+function renderRecommendationRows(targetId, rows) {
+  const body = $(targetId);
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="11">No recommendations available.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows
+    .map(
+      (row) => `<tr tabindex="0" data-symbol="${escapeHtml(row.symbol)}">
+        <td>${row.rank}</td>
+        <td><strong>${escapeHtml(row.symbol)}</strong><span>${money(row.last_close)}</span></td>
+        <td class="momentum-industry"><strong>${sectorLinkHtml(row.sector)}</strong><span>${escapeHtml(row.industry || "-")}</span></td>
+        <td class="${signedClass(row.quant_score)}">${formatNumber(row.quant_score, { digits: 2 })}</td>
+        <td class="${signedClass(row.ml_expected_21d)}">${percent(row.ml_expected_21d)}</td>
+        <td class="${signedClass(row.momentum_12_1)}">${percent(row.momentum_12_1)}</td>
+        <td class="${signedClass(row.distance_from_sma_200)}">${percent(row.distance_from_sma_200)}</td>
+        <td>${formatNumber(row.rsi_14, { digits: 1 })}</td>
+        <td><span class="confidence ${escapeHtml((row.confidence || "").toLowerCase())}">${escapeHtml(row.confidence || "-")}</span></td>
+        <td class="recommendation-reason" title="${escapeHtml(row.reason || "")}">${escapeHtml(row.reason || "-")}</td>
+        <td><button class="open-button" type="button" data-symbol="${escapeHtml(row.symbol)}">Open</button></td>
+      </tr>`
+    )
+    .join("");
+  bindStockOpenRows(body);
 }
 
 function tickerItemHtml(row) {
@@ -559,6 +633,7 @@ async function openSectorDive(sector) {
   state.view = "sector";
   state.sector = sector;
   $("dashboardView").classList.add("hidden");
+  $("recommendationsView").classList.add("hidden");
   $("deepDiveView").classList.add("hidden");
   $("sectorDiveView").classList.remove("hidden");
   document.body.classList.add("deep-mode");
@@ -684,6 +759,7 @@ async function openDeepDive(symbol) {
   state.view = "deep";
   state.selected = symbol;
   $("dashboardView").classList.add("hidden");
+  $("recommendationsView").classList.add("hidden");
   $("sectorDiveView").classList.add("hidden");
   $("deepDiveView").classList.remove("hidden");
   document.body.classList.add("deep-mode");
@@ -696,6 +772,7 @@ function showDashboard() {
   state.view = "dashboard";
   $("deepDiveView").classList.add("hidden");
   $("sectorDiveView").classList.add("hidden");
+  $("recommendationsView").classList.add("hidden");
   $("dashboardView").classList.remove("hidden");
   document.body.classList.remove("deep-mode");
   updateChatScope();
@@ -1211,6 +1288,9 @@ function attachEvents() {
   $("fundamentalMetric").addEventListener("change", loadFundamentals);
   $("backButton").addEventListener("click", showDashboard);
   $("sectorBackButton").addEventListener("click", showDashboard);
+  $("recommendationsBackButton").addEventListener("click", showDashboard);
+  $("recommendationsLink").addEventListener("click", openRecommendations);
+  $("recommendationsRefreshButton").addEventListener("click", loadRecommendations);
   $("prevStockButton").addEventListener("click", () => navigateStock(-1));
   $("nextStockButton").addEventListener("click", () => navigateStock(1));
 
