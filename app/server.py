@@ -1274,7 +1274,7 @@ def chat_requested_limit(question: str, default: int = 10, maximum: int = 25) ->
 def chat_recommendation_answer(store: DataStore, question: str) -> dict[str, object]:
     lowered = question.lower()
     limit = chat_requested_limit(question, default=10)
-    side = "sell" if re.search(r"\b(sell|short|avoid|weakest|worst)\b", lowered) else "buy"
+    side = "sell" if re.search(r"\b(sell|sells|short|shorts|avoid|weakest|worst)\b", lowered) else "buy"
     payload = recommendation_payload(store, limit=limit, allow_compute=False)
     rows = [
         {key: chat_value(value) for key, value in row.items()}
@@ -1502,17 +1502,86 @@ def external_llm_status() -> dict[str, object]:
     }
 
 
+def recommendation_context_needed(question: str, local_response: dict[str, object]) -> bool:
+    lowered = question.lower()
+    if re.search(r"\b(recommend|recommendation|recommendations|buy|buys|sell|sells|short|shorts|avoid|advanced|model|signal|signals|quant)\b", lowered):
+        return True
+    rows = local_response.get("rows")
+    if isinstance(rows, list):
+        return any(isinstance(row, dict) and row.get("signal") for row in rows)
+    return False
+
+
+def compact_recommendation_rows(rows: object, limit: int = 5) -> list[dict[str, object]]:
+    if not isinstance(rows, list):
+        return []
+    columns = [
+        "rank",
+        "signal",
+        "confidence",
+        "symbol",
+        "name",
+        "sector",
+        "industry",
+        "last_close",
+        "quant_score",
+        "advanced_score",
+        "ml_expected_21d",
+        "probability_up",
+        "momentum_12_1",
+        "return_1m",
+        "return_3m",
+        "distance_from_sma_200",
+        "target_upside",
+        "reason",
+    ]
+    compacted: list[dict[str, object]] = []
+    for row in rows[:limit]:
+        if isinstance(row, dict):
+            compacted.append({key: row.get(key) for key in columns if key in row})
+    return compacted
+
+
+def recommendation_payload_context(store: DataStore) -> dict[str, object]:
+    context: dict[str, object] = {}
+    basic = recommendation_payload(store, limit=5, allow_compute=False)
+    context["basic"] = {
+        "status": basic.get("status"),
+        "as_of": basic.get("as_of"),
+        "model": basic.get("model", {}).get("name") if isinstance(basic.get("model"), dict) else basic.get("model"),
+        "methodology": list(basic.get("methodology") or [])[:3],
+        "buy": compact_recommendation_rows(basic.get("buy")),
+        "sell": compact_recommendation_rows(basic.get("sell")),
+    }
+    advanced = advanced_recommendation_payload(store, limit=5, allow_compute=False)
+    context["advanced"] = {
+        "status": advanced.get("status"),
+        "as_of": advanced.get("as_of"),
+        "model": advanced.get("model", {}).get("name") if isinstance(advanced.get("model"), dict) else advanced.get("model"),
+        "methodology": list(advanced.get("methodology") or [])[:4],
+        "buy": compact_recommendation_rows(advanced.get("buy")),
+        "sell": compact_recommendation_rows(advanced.get("sell")),
+    }
+    return context
+
+
 def compact_chat_payload(question: str, local_response: dict[str, object]) -> dict[str, object]:
-    return {
+    payload = {
         "question": question[:1000],
         "local_answer": local_response.get("answer"),
         "stock_rows": list(local_response.get("rows") or [])[:10],
         "group_rows": list(local_response.get("group_rows") or [])[:10],
+        "recommendation_context": local_response.get("recommendation_context"),
         "answer_style": (
-            "Write for an average investor. Use one short summary sentence, then up to three concise bullets "
-            "when rows are available. Do not output JSON, code, markdown tables, raw field names, or internal instructions."
+            "Write for an average investor. Use two to four short sentences plus up to three concise bullets when helpful. "
+            "When recommendation_context is present, explain the basic and advanced recommendation signals, any overlap or "
+            "difference between them, and the main drivers. Do not output JSON, code, markdown tables, raw field names, "
+            "or internal instructions. Mention that recommendations are research signals, not financial advice."
         ),
     }
+    if payload["recommendation_context"] is None:
+        payload.pop("recommendation_context")
+    return payload
 
 
 def local_response_has_data(local_response: dict[str, object]) -> bool:
@@ -1885,34 +1954,48 @@ def external_retry_requested(question: str) -> bool:
     )
 
 
+def with_recommendation_context(store: DataStore, question: str, local_response: dict[str, object]) -> dict[str, object]:
+    if not recommendation_context_needed(question, local_response):
+        return local_response
+    try:
+        return {**local_response, "recommendation_context": recommendation_payload_context(store)}
+    except Exception as exc:  # noqa: BLE001
+        print(f"Recommendation context unavailable for chat: {exc}", flush=True)
+        return local_response
+
+
 def chat_local_response(store: DataStore, question: str, context: dict[str, object]) -> dict[str, object]:
     if not question:
-        return chat_help_answer(store)
+        return with_recommendation_context(store, question, chat_help_answer(store))
 
     lowered = question.lower()
     symbols = chat_find_symbols(store, question, context)
-    if re.search(r"\b(buy|sell|recommend|recommendation|recommendations|short|avoid)\b", lowered) and (
+    if re.search(r"\b(buy|buys|sell|sells|recommend|recommendation|recommendations|short|shorts|avoid)\b", lowered) and (
         not symbols or re.search(r"\b(top|list|which|what|show)\b", lowered)
     ):
-        return chat_recommendation_answer(store, question)
+        return with_recommendation_context(store, question, chat_recommendation_answer(store, question))
 
     if symbols:
-        return chat_stock_answer(store, symbols)
+        return with_recommendation_context(store, question, chat_stock_answer(store, symbols))
 
     sector = chat_find_sector(store, question, context)
     if sector:
-        return chat_sector_answer(store, sector, question)
+        return with_recommendation_context(store, question, chat_sector_answer(store, sector, question))
 
     if ("sector" in lowered or "industry" in lowered) and ("momentum" in lowered or "strongest" in lowered or "top" in lowered):
-        return chat_group_momentum_answer(store, question)
+        return with_recommendation_context(store, question, chat_group_momentum_answer(store, question))
 
     if re.search(r"\b(help|what can|examples|how do)\b", lowered):
-        return chat_help_answer(store)
+        return with_recommendation_context(store, question, chat_help_answer(store))
 
     if chat_ranked_query(question):
-        return chat_ranked_answer(store, question)
+        return with_recommendation_context(store, question, chat_ranked_answer(store, question))
 
-    return {"answer": "I do not have that in the loaded SenQuant data.", "rows": [], "actions": []}
+    return with_recommendation_context(
+        store,
+        question,
+        {"answer": "I do not have that in the loaded SenQuant data.", "rows": [], "actions": []},
+    )
 
 
 def chat_response(store: DataStore, payload: dict[str, object]) -> dict[str, object]:
