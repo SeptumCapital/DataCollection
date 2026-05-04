@@ -28,11 +28,15 @@ services:
       - key: SENQUANT_OLLAMA_MODEL
         value: llama3.2:1b
       - key: SENQUANT_OLLAMA_TIMEOUT_SECONDS
-        value: "45"
+        value: "12"
       - key: SENQUANT_OLLAMA_MAX_TOKENS
-        value: "160"
+        value: "90"
+      - key: SENQUANT_OLLAMA_NUM_CTX
+        value: "2048"
       - key: SENQUANT_OLLAMA_KEEP_ALIVE
-        value: 30m
+        value: 24h
+      - key: SENQUANT_OLLAMA_COOLDOWN_SECONDS
+        value: "120"
       - key: SENQUANT_EXTERNAL_LLM_TIMEOUT_SECONDS
         value: "90"
       - key: SENQUANT_EXTERNAL_LLM_MAX_TOKENS
@@ -58,6 +62,8 @@ services:
         value: /var/data/ollama/models
       - key: OLLAMA_WARMUP_TIMEOUT_SECONDS
         value: "180"
+      - key: OLLAMA_WARMUP_INTERVAL_SECONDS
+        value: "900"
     disk:
       name: senquant-ollama-models
       mountPath: /var/data/ollama

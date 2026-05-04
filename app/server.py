@@ -1056,6 +1056,7 @@ ADVANCED_RECOMMENDATION_BUILD_LOCK = threading.Lock()
 ADVANCED_RECOMMENDATION_DELAY_STATE: dict[str, bool] = {"scheduled": False}
 CHAT_SESSION_MEMORY: dict[str, dict[str, object]] = {}
 EXTERNAL_LLM_LAST_ERROR: dict[str, str | None] = {"message": None}
+OLLAMA_HEALTH: dict[str, object] = {"failure_count": 0, "unavailable_until": 0.0, "last_latency": None, "last_error": None}
 
 CHAT_ROW_COLUMNS = [
     "rank",
@@ -1417,7 +1418,7 @@ def ollama_base_url() -> str | None:
 
 def ollama_chat_enabled() -> bool:
     disabled = os.environ.get("SENQUANT_ENABLE_OLLAMA_CHAT", "").lower() in {"0", "false", "no", "off"}
-    return bool(ollama_base_url()) and not disabled
+    return bool(ollama_base_url()) and not disabled and not ollama_in_cooldown()
 
 
 def ollama_chat_status() -> dict[str, object]:
@@ -1426,6 +1427,12 @@ def ollama_chat_status() -> dict[str, object]:
         "base_url_configured": bool(ollama_base_url()),
         "model": ollama_model_name(),
         "timeout_seconds": ollama_timeout_seconds(),
+        "max_tokens": ollama_max_tokens(),
+        "context_tokens": ollama_context_tokens(),
+        "cooldown_active": ollama_in_cooldown(),
+        "failure_count": OLLAMA_HEALTH["failure_count"],
+        "last_latency_seconds": OLLAMA_HEALTH["last_latency"],
+        "last_error": OLLAMA_HEALTH["last_error"],
         "external_fallback": external_llm_status(),
     }
 
@@ -1435,11 +1442,39 @@ def ollama_model_name() -> str:
 
 
 def ollama_timeout_seconds() -> float:
-    return safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 45.0
+    return safe_float(os.environ.get("SENQUANT_OLLAMA_TIMEOUT_SECONDS")) or 12.0
 
 
 def ollama_max_tokens() -> int:
-    return safe_int(os.environ.get("SENQUANT_OLLAMA_MAX_TOKENS")) or 160
+    return safe_int(os.environ.get("SENQUANT_OLLAMA_MAX_TOKENS")) or 90
+
+
+def ollama_context_tokens() -> int:
+    return safe_int(os.environ.get("SENQUANT_OLLAMA_NUM_CTX")) or 2048
+
+
+def ollama_cooldown_seconds() -> float:
+    return safe_float(os.environ.get("SENQUANT_OLLAMA_COOLDOWN_SECONDS")) or 120.0
+
+
+def ollama_in_cooldown() -> bool:
+    return time.time() < float(OLLAMA_HEALTH.get("unavailable_until") or 0)
+
+
+def mark_ollama_success(latency: float) -> None:
+    OLLAMA_HEALTH.update({"failure_count": 0, "unavailable_until": 0.0, "last_latency": round(latency, 3), "last_error": None})
+
+
+def mark_ollama_failure(error: object) -> None:
+    failures = int(OLLAMA_HEALTH.get("failure_count") or 0) + 1
+    cooldown = ollama_cooldown_seconds() if failures >= 1 else 0
+    OLLAMA_HEALTH.update(
+        {
+            "failure_count": failures,
+            "unavailable_until": time.time() + cooldown,
+            "last_error": str(error),
+        }
+    )
 
 
 def external_llm_base_url() -> str | None:
@@ -1694,8 +1729,8 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
                 "content": json.dumps(user_payload, separators=(",", ":"), default=str),
             },
         ],
-        "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": ollama_max_tokens()},
-        "keep_alive": os.environ.get("SENQUANT_OLLAMA_KEEP_ALIVE", "30m"),
+        "options": {"temperature": 0.1, "num_ctx": ollama_context_tokens(), "num_predict": ollama_max_tokens()},
+        "keep_alive": os.environ.get("SENQUANT_OLLAMA_KEEP_ALIVE", "24h"),
     }
     request = Request(
         f"{base_url}/api/chat",
@@ -1703,10 +1738,12 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
         headers={"Content-Type": "application/json"},
         method="POST",
     )
+    started = time.time()
     try:
         with urlopen(request, timeout=timeout) as response:  # noqa: S310 - URL is operator-configured.
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:  # noqa: BLE001
+        mark_ollama_failure(exc)
         print(f"Ollama chat unavailable: {exc}", flush=True)
         return None
 
@@ -1714,7 +1751,9 @@ def call_ollama_chat(question: str, local_response: dict[str, object]) -> str | 
     content = message.get("content") if isinstance(message, dict) else None
     content = str(content or "").strip()
     if not ollama_answer_usable(content):
+        mark_ollama_failure("unusable Ollama response")
         return None
+    mark_ollama_success(time.time() - started)
     return content or None
 
 

@@ -189,12 +189,14 @@ The included `render.yaml` defines a private Docker service named `senquant-olla
 ```text
 SENQUANT_OLLAMA_HOSTPORT=<private senquant-ollama host:port>
 SENQUANT_OLLAMA_MODEL=llama3.2:1b
-SENQUANT_OLLAMA_TIMEOUT_SECONDS=45
-SENQUANT_OLLAMA_MAX_TOKENS=160
-SENQUANT_OLLAMA_KEEP_ALIVE=30m
+SENQUANT_OLLAMA_TIMEOUT_SECONDS=12
+SENQUANT_OLLAMA_MAX_TOKENS=90
+SENQUANT_OLLAMA_NUM_CTX=2048
+SENQUANT_OLLAMA_KEEP_ALIVE=24h
+SENQUANT_OLLAMA_COOLDOWN_SECONDS=120
 ```
 
-The Ollama service stores models under `/var/data/ollama/models`, pulls `OLLAMA_MODEL` on first boot, and starts a warmup prompt in the background after the model is present. Start with `llama3.2:1b` for faster CPU responses. You can move to a larger model by changing both `OLLAMA_MODEL` on the private service and `SENQUANT_OLLAMA_MODEL` on the web service, then redeploying.
+The Ollama service stores models under `/var/data/ollama/models`, pulls `OLLAMA_MODEL` on first boot, and runs periodic warmup prompts to keep the model responsive. Start with `llama3.2:1b` for faster CPU responses. You can move to a larger model by changing both `OLLAMA_MODEL` on the private service and `SENQUANT_OLLAMA_MODEL` on the web service, then redeploying.
 
 Optional external fallback for a RunPod endpoint. For the native RunPod URL shown in the console, use the endpoint base URL without `/run`:
 
