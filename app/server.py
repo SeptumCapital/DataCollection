@@ -1639,9 +1639,7 @@ def external_answer_usable(content: str) -> bool:
         return False
     if stripped.startswith(("{", "[")) and stripped.endswith(("}", "]")):
         return False
-    lowered = stripped.lower()
-    blocked_phrases = ("local_answer", "stock_rows", "group_rows", "answer_style")
-    return not any(phrase in lowered for phrase in blocked_phrases)
+    return True
 
 
 def clean_external_answer(content: str) -> str:
@@ -1658,6 +1656,15 @@ def clean_external_answer(content: str) -> str:
         cleaned = cleaned.split("\nFinal answer:", 1)[-1].strip()
     if "\nAnswer:" in cleaned:
         cleaned = cleaned.split("\nAnswer:", 1)[-1].strip()
+    replacements = {
+        "local_answer": "local answer",
+        "stock_rows": "stock rows",
+        "group_rows": "group rows",
+        "recommendation_context": "recommendation context",
+        "answer_style": "answer style",
+    }
+    for raw, label in replacements.items():
+        cleaned = re.sub(rf"\b{raw}\b", label, cleaned, flags=re.IGNORECASE)
     return cleaned
 
 
